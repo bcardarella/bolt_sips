@@ -223,13 +223,52 @@ defmodule Bolt.Sips.Types do
     def format_param(param) do
       {:error, param}
     end
+
+    @doc """
+    Converts the TimeWithTZOffset to a UTC Time by applying the timezone offset.
+
+    The timezone offset (in seconds east of UTC) is subtracted from the time
+    to produce the equivalent UTC time.
+
+    Note: Since Elixir's Time struct doesn't carry timezone information,
+    the returned Time represents the time in UTC.
+
+    ## Examples
+
+        iex> alias Bolt.Sips.Types.TimeWithTZOffset
+        iex> t = %TimeWithTZOffset{time: ~T[12:30:00], timezone_offset: 0}
+        iex> TimeWithTZOffset.to_utc_time(t)
+        ~T[12:30:00]
+
+        iex> alias Bolt.Sips.Types.TimeWithTZOffset
+        iex> t = %TimeWithTZOffset{time: ~T[12:30:00], timezone_offset: 3600}
+        iex> TimeWithTZOffset.to_utc_time(t)
+        ~T[11:30:00]
+
+        iex> alias Bolt.Sips.Types.TimeWithTZOffset
+        iex> t = %TimeWithTZOffset{time: ~T[00:30:00], timezone_offset: 3600}
+        iex> TimeWithTZOffset.to_utc_time(t)
+        ~T[23:30:00]
+
+    """
+    @spec to_utc_time(t() | nil) :: Time.t() | nil
+    def to_utc_time(value)
+    def to_utc_time(nil), do: nil
+    def to_utc_time(%__MODULE__{time: time, timezone_offset: 0}), do: time
+
+    def to_utc_time(%__MODULE__{time: time, timezone_offset: offset}) do
+      Time.add(time, -offset, :second)
+    end
   end
 
   defmodule DateTimeWithTZOffset do
     @moduledoc """
-    Manage a Time and its time zone offset.
+    Manage a DateTime and its time zone offset.
 
-    This temporal types hs been added in bolt v2
+    This temporal type was added in bolt v2.
+
+    The `naive_datetime` field stores the local datetime, and `timezone_offset`
+    stores the offset from UTC in seconds (positive for east of UTC).
     """
     defstruct [:naive_datetime, :timezone_offset]
 
@@ -261,6 +300,49 @@ defmodule Bolt.Sips.Types do
 
     def format_param(param) do
       {:error, param}
+    end
+
+    @doc """
+    Converts the DateTimeWithTZOffset to an Elixir DateTime struct in UTC.
+
+    The timezone offset (in seconds east of UTC) is subtracted from the
+    naive datetime to produce the equivalent UTC DateTime.
+
+    ## Examples
+
+        iex> alias Bolt.Sips.Types.DateTimeWithTZOffset
+        iex> dt = %DateTimeWithTZOffset{naive_datetime: ~N[2026-01-25 20:59:16], timezone_offset: 0}
+        iex> DateTimeWithTZOffset.to_datetime(dt)
+        ~U[2026-01-25 20:59:16Z]
+
+        iex> alias Bolt.Sips.Types.DateTimeWithTZOffset
+        iex> dt = %DateTimeWithTZOffset{naive_datetime: ~N[2026-01-25 20:59:16], timezone_offset: 3600}
+        iex> DateTimeWithTZOffset.to_datetime(dt)
+        ~U[2026-01-25 19:59:16Z]
+
+        iex> alias Bolt.Sips.Types.DateTimeWithTZOffset
+        iex> dt = %DateTimeWithTZOffset{naive_datetime: ~N[2026-01-25 01:30:00], timezone_offset: -18000}
+        iex> DateTimeWithTZOffset.to_datetime(dt)
+        ~U[2026-01-25 06:30:00Z]
+
+        iex> alias Bolt.Sips.Types.DateTimeWithTZOffset
+        iex> dt = %DateTimeWithTZOffset{naive_datetime: ~N[2026-01-25 20:59:16.988051], timezone_offset: 0}
+        iex> DateTimeWithTZOffset.to_datetime(dt)
+        ~U[2026-01-25 20:59:16.988051Z]
+
+    """
+    @spec to_datetime(t() | nil) :: DateTime.t() | nil
+    def to_datetime(value)
+    def to_datetime(nil), do: nil
+
+    def to_datetime(%__MODULE__{naive_datetime: naive_dt, timezone_offset: 0}) do
+      DateTime.from_naive!(naive_dt, "Etc/UTC")
+    end
+
+    def to_datetime(%__MODULE__{naive_datetime: naive_dt, timezone_offset: offset}) do
+      naive_dt
+      |> DateTime.from_naive!("Etc/UTC")
+      |> DateTime.add(-offset, :second)
     end
   end
 
