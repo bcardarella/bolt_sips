@@ -6,12 +6,13 @@ defmodule Bolt.Sips.Protocol do
   defmodule ConnData do
     @moduledoc false
     # Defines the state used by DbConnection implementation
-    defstruct [:sock, :bolt_version, :configuration]
+    defstruct [:sock, :bolt_version, :configuration, :server_hints]
 
     @type t :: %__MODULE__{
             sock: port(),
-            bolt_version: integer(),
-            configuration: Keyword.t()
+            bolt_version: integer() | {integer(), integer()},
+            configuration: Keyword.t(),
+            server_hints: map() | nil
           }
   end
 
@@ -45,13 +46,14 @@ defmodule Bolt.Sips.Protocol do
 
     with {:ok, sock} <- socket.connect(host, port, socket_opts, timeout),
          {:ok, bolt_version} <- BoltProtocol.handshake(socket, sock),
-         {:ok, server_version} <- do_init(socket, sock, bolt_version, auth),
+         {:ok, server_version, server_hints} <- do_init(socket, sock, bolt_version, auth),
          :ok <- socket.setopts(sock, active: :once) do
       {:ok,
        %ConnData{
          sock: sock,
          bolt_version: bolt_version,
-         configuration: Keyword.merge(conf, server_version: server_version)
+         configuration: Keyword.merge(conf, server_version: server_version),
+         server_hints: server_hints
        }}
     else
       {:error, %BoltError{}} = error ->
@@ -62,12 +64,93 @@ defmodule Bolt.Sips.Protocol do
     end
   end
 
-  defp do_init(transport, port, 3, auth) do
-    BoltProtocol.hello(transport, port, 3, auth)
+  # v5.1+ uses HELLO (without auth) + LOGON (with auth)
+  defp do_init(transport, port, {major, minor} = bolt_version, auth)
+       when major >= 5 and minor >= 1 do
+    # For v5.1+, HELLO doesn't include auth credentials
+    # LOGON is sent separately after HELLO
+    with {:ok, hello_info} <- BoltProtocol.hello(transport, port, bolt_version, {}),
+         {:ok, server_info} <- do_logon(transport, port, bolt_version, auth) do
+      hints = extract_server_hints(hello_info)
+      {:ok, server_info, hints}
+    end
+  end
+
+  # v4+ uses HELLO with auth (same as v3)
+  defp do_init(transport, port, bolt_version, auth) when is_tuple(bolt_version) do
+    case BoltProtocol.hello(transport, port, bolt_version, auth) do
+      {:ok, server_info} ->
+        hints = extract_server_hints(server_info)
+        {:ok, server_info, hints}
+
+      error ->
+        error
+    end
+  end
+
+  defp do_init(transport, port, bolt_version, auth) when bolt_version >= 3 do
+    case BoltProtocol.hello(transport, port, bolt_version, auth) do
+      {:ok, server_info} ->
+        hints = extract_server_hints(server_info)
+        {:ok, server_info, hints}
+
+      error ->
+        error
+    end
   end
 
   defp do_init(transport, port, bolt_version, auth) do
-    BoltProtocol.init(transport, port, bolt_version, auth)
+    case BoltProtocol.init(transport, port, bolt_version, auth) do
+      {:ok, server_info} ->
+        # v1/v2 don't have hints
+        {:ok, server_info, nil}
+
+      error ->
+        error
+    end
+  end
+
+  # Extract server hints from HELLO/INIT response
+  # Known hints:
+  #   - "connection.recv_timeout_seconds": Recommended receive timeout
+  #   - "telemetry.enabled": Whether telemetry is enabled on server
+  #   - "ssr.enabled": Whether Server-Side Routing is enabled
+  @spec extract_server_hints(map()) :: map()
+  defp extract_server_hints(server_info) when is_map(server_info) do
+    hint_keys = [
+      "connection.recv_timeout_seconds",
+      "telemetry.enabled",
+      "ssr.enabled",
+      "hints"
+    ]
+
+    # Extract known hint keys and any nested hints map
+    hints =
+      server_info
+      |> Map.take(hint_keys)
+      |> Map.merge(Map.get(server_info, "hints", %{}))
+
+    if map_size(hints) > 0, do: hints, else: nil
+  end
+
+  defp extract_server_hints(_), do: nil
+
+  # LOGON for v5.1+ - sends authentication credentials
+  defp do_logon(transport, port, bolt_version, auth) do
+    alias Bolt.Sips.Internals.BoltProtocolHelper
+
+    BoltProtocolHelper.send_message(transport, port, bolt_version, {:logon, [auth]})
+
+    case BoltProtocolHelper.receive_data(transport, port, bolt_version, []) do
+      {:success, info} ->
+        {:ok, info}
+
+      {:failure, response} ->
+        {:error, BoltError.exception(response, port, :logon)}
+
+      other ->
+        {:error, BoltError.exception(other, port, :logon)}
+    end
   end
 
   @doc "Callback for DBConnection.checkout/1"
@@ -86,9 +169,11 @@ defmodule Bolt.Sips.Protocol do
     end
   end
 
-  def disconnect(_err, %ConnData{sock: sock, bolt_version: 3, configuration: conf} = conn_data) do
+  # v4+ and v3 use GOODBYE
+  def disconnect(_err, %ConnData{sock: sock, bolt_version: bolt_version, configuration: conf})
+      when is_tuple(bolt_version) or bolt_version >= 3 do
     socket = conf[:socket]
-    :ok = BoltProtocol.goodbye(socket, sock, conn_data.bolt_version)
+    :ok = BoltProtocol.goodbye(socket, sock, bolt_version)
     socket.close(sock)
 
     :ok
@@ -102,9 +187,23 @@ defmodule Bolt.Sips.Protocol do
   end
 
   @doc "Callback for DBConnection.handle_begin/1"
-  def handle_begin(_, %ConnData{sock: sock, bolt_version: 3, configuration: conf} = conn_data) do
-    {:ok, _} = BoltProtocol.begin(conf[:socket], sock, conn_data.bolt_version)
-    {:ok, :began, conn_data}
+  # v4+ and v3 use BEGIN message
+  def handle_begin(_, %ConnData{sock: sock, bolt_version: bolt_version, configuration: conf} = conn_data)
+      when is_tuple(bolt_version) or bolt_version >= 3 do
+    socket = conf[:socket]
+
+    case BoltProtocol.begin(socket, sock, bolt_version) do
+      {:ok, _} ->
+        {:ok, :began, conn_data}
+
+      {:error, %BoltError{type: :connection_error} = error} ->
+        {:disconnect, error, conn_data}
+
+      {:error, %BoltError{} = error} ->
+        # Reset connection state on failure
+        BoltProtocol.reset(socket, sock, bolt_version)
+        {:error, error, conn_data}
+    end
   end
 
   def handle_begin(_opts, conn_data) do
@@ -115,9 +214,23 @@ defmodule Bolt.Sips.Protocol do
   end
 
   @doc "Callback for DBConnection.handle_rollback/1"
-  def handle_rollback(_, %ConnData{sock: sock, bolt_version: 3, configuration: conf} = conn_data) do
-    :ok = BoltProtocol.rollback(conf[:socket], sock, conn_data.bolt_version)
-    {:ok, :rolledback, conn_data}
+  # v4+ and v3 use ROLLBACK message
+  def handle_rollback(_, %ConnData{sock: sock, bolt_version: bolt_version, configuration: conf} = conn_data)
+      when is_tuple(bolt_version) or bolt_version >= 3 do
+    socket = conf[:socket]
+
+    case BoltProtocol.rollback(socket, sock, bolt_version) do
+      :ok ->
+        {:ok, :rolledback, conn_data}
+
+      %BoltError{type: :connection_error} = error ->
+        {:disconnect, error, conn_data}
+
+      %BoltError{} = error ->
+        # Reset connection state on failure
+        BoltProtocol.reset(socket, sock, bolt_version)
+        {:error, error, conn_data}
+    end
   end
 
   def handle_rollback(_opts, conn_data) do
@@ -128,9 +241,23 @@ defmodule Bolt.Sips.Protocol do
   end
 
   @doc "Callback for DBConnection.handle_commit/1"
-  def handle_commit(_, %ConnData{sock: sock, bolt_version: 3, configuration: conf} = conn_data) do
-    {:ok, _} = BoltProtocol.commit(conf[:socket], sock, conn_data.bolt_version)
-    {:ok, :committed, conn_data}
+  # v4+ and v3 use COMMIT message
+  def handle_commit(_, %ConnData{sock: sock, bolt_version: bolt_version, configuration: conf} = conn_data)
+      when is_tuple(bolt_version) or bolt_version >= 3 do
+    socket = conf[:socket]
+
+    case BoltProtocol.commit(socket, sock, bolt_version) do
+      {:ok, _} ->
+        {:ok, :committed, conn_data}
+
+      {:error, %BoltError{type: :connection_error} = error} ->
+        {:disconnect, error, conn_data}
+
+      {:error, %BoltError{} = error} ->
+        # Reset connection state on failure
+        BoltProtocol.reset(socket, sock, bolt_version)
+        {:error, error, conn_data}
+    end
   end
 
   def handle_commit(_opts, conn_data) do
@@ -176,7 +303,23 @@ defmodule Bolt.Sips.Protocol do
       [{:success, _} | _] = data ->
         {:ok, q, data, conn_data}
 
+      # IGNORED means the server is in FAILED state - reset and return error
+      [{:ignored, _} | _] ->
+        BoltProtocol.reset(socket, sock, bolt_version)
+        error = BoltError.exception("Server in FAILED state, connection has been reset", sock, :ignored)
+        {:error, error, conn_data}
+
+      {:ignored, _} ->
+        BoltProtocol.reset(socket, sock, bolt_version)
+        error = BoltError.exception("Server in FAILED state, connection has been reset", sock, :ignored)
+        {:error, error, conn_data}
+
       %BoltError{type: :cypher_error} = error ->
+        BoltProtocol.reset(socket, sock, bolt_version)
+        {:error, error, conn_data}
+
+      %BoltError{type: :protocol_error} = error ->
+        # Protocol errors also require RESET to recover
         BoltProtocol.reset(socket, sock, bolt_version)
         {:error, error, conn_data}
 
@@ -184,20 +327,32 @@ defmodule Bolt.Sips.Protocol do
         {:disconnect, error, conn_data}
 
       %BoltError{} = error ->
+        # For any other error type, attempt RESET to ensure clean state
+        BoltProtocol.reset(socket, sock, bolt_version)
         {:error, error, conn_data}
     end
   rescue
     e ->
+      %ConnData{sock: sock, bolt_version: bolt_version, configuration: conf} = conn_data
+      socket = conf |> Keyword.get(:socket)
+
+      # Attempt to reset connection state after exception
+      try do
+        BoltProtocol.reset(socket, sock, bolt_version)
+      rescue
+        _ -> :ok
+      end
+
       msg =
         case e do
-          %Bolt.Sips.Internals.PackStreamError{} ->
-            "unable to encode value: #{inspect(e.data)}"
+          %Bolt.Sips.Internals.PackStreamError{data: data} ->
+            "unable to encode value: #{inspect(data)}"
 
-          %BoltError{} ->
-            "#{e.message}, type: #{e.type}"
+          %BoltError{message: message, type: type} ->
+            "#{message}, type: #{type}"
 
           _ ->
-            e.message
+            Exception.message(e)
         end
 
       {:error, %{code: :failure, message: msg}, conn_data}

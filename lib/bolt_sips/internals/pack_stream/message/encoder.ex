@@ -33,22 +33,36 @@ defmodule Bolt.Sips.Internals.PackStream.Message.Encoder do
   @max_chunk_size 65_535
   @end_marker <<0x00, 0x00>>
 
+  # Message signatures
   @ack_failure_signature 0x0E
   @begin_signature 0x11
   @commit_signature 0x12
-  @discard_all_signature 0x2F
+  @discard_all_signature 0x2F  # Also used for DISCARD in v4+
+  @discard_signature 0x2F      # Same as DISCARD_ALL
   @goodbye_signature 0x02
   @hello_signature 0x01
   @init_signature 0x01
-  @pull_all_signature 0x3F
+  @pull_all_signature 0x3F     # Also used for PULL in v4+
+  @pull_signature 0x3F         # Same as PULL_ALL
   @reset_signature 0x0F
   @rollback_signature 0x13
   @run_signature 0x10
+  @route_signature 0x66        # v4.3+
+  @logon_signature 0x6A        # v5.1+
+  @logoff_signature 0x6B       # v5.1+
+  @telemetry_signature 0x54    # v5.4+
 
-  # OUT Signature
+  # OUT Signature lists for validation
+  @valid_v1_signatures [
+    @ack_failure_signature,
+    @discard_all_signature,
+    @init_signature,
+    @pull_all_signature,
+    @reset_signature,
+    @run_signature
+  ]
 
-  # TODO improve using macros?
-  @valid_signatures [
+  @valid_v3_signatures [
     @ack_failure_signature,
     @begin_signature,
     @commit_signature,
@@ -61,16 +75,45 @@ defmodule Bolt.Sips.Internals.PackStream.Message.Encoder do
     @run_signature
   ]
 
-  @valid_v1_signatures [
-    @ack_failure_signature,
-    @discard_all_signature,
-    @init_signature,
-    @pull_all_signature,
+  @valid_v4_signatures [
+    @begin_signature,
+    @commit_signature,
+    @discard_signature,
+    @goodbye_signature,
+    @hello_signature,
+    @pull_signature,
     @reset_signature,
+    @rollback_signature,
+    @route_signature,
     @run_signature
   ]
 
-  @valid_message_types [
+  @valid_v5_signatures [
+    @begin_signature,
+    @commit_signature,
+    @discard_signature,
+    @goodbye_signature,
+    @hello_signature,
+    @logoff_signature,
+    @logon_signature,
+    @pull_signature,
+    @reset_signature,
+    @rollback_signature,
+    @route_signature,
+    @run_signature,
+    @telemetry_signature
+  ]
+
+  @valid_v1_message_types [
+    :ack_failure,
+    :discard_all,
+    :init,
+    :pull_all,
+    :reset,
+    :run
+  ]
+
+  @valid_v3_message_types [
     :ack_failure,
     :begin,
     :commit,
@@ -83,21 +126,47 @@ defmodule Bolt.Sips.Internals.PackStream.Message.Encoder do
     :run
   ]
 
-  @valid_v1_message_types [
-    :ack_failure,
-    :discard_all,
-    :init,
-    :pull_all,
+  @valid_v4_message_types [
+    :begin,
+    :commit,
+    :discard,
+    :goodbye,
+    :hello,
+    :pull,
     :reset,
+    :rollback,
+    :route,
     :run
   ]
 
-  @last_bolt_version 3
+  @valid_v5_message_types [
+    :begin,
+    :commit,
+    :discard,
+    :goodbye,
+    :hello,
+    :logoff,
+    :logon,
+    :pull,
+    :reset,
+    :rollback,
+    :route,
+    :run,
+    :telemetry
+  ]
+
+  # For backward compatibility
+  @valid_signatures @valid_v3_signatures
+  @valid_message_types @valid_v3_message_types
+
+  @last_bolt_version 5
 
   @spec signature(Bolt.Sips.Internals.PackStream.Message.out_signature()) :: integer()
   defp signature(:ack_failure), do: @ack_failure_signature
   defp signature(:discard_all), do: @discard_all_signature
+  defp signature(:discard), do: @discard_signature
   defp signature(:pull_all), do: @pull_all_signature
+  defp signature(:pull), do: @pull_signature
   defp signature(:reset), do: @reset_signature
   defp signature(:begin), do: @begin_signature
   defp signature(:commit), do: @commit_signature
@@ -106,6 +175,10 @@ defmodule Bolt.Sips.Internals.PackStream.Message.Encoder do
   defp signature(:rollback), do: @rollback_signature
   defp signature(:run), do: @run_signature
   defp signature(:init), do: @init_signature
+  defp signature(:route), do: @route_signature
+  defp signature(:logon), do: @logon_signature
+  defp signature(:logoff), do: @logoff_signature
+  defp signature(:telemetry), do: @telemetry_signature
 
   @doc """
   Return client name (based on bolt_sips version)
@@ -115,24 +188,43 @@ defmodule Bolt.Sips.Internals.PackStream.Message.Encoder do
   end
 
   @doc """
-  Return the valid message signatures depending on the Bolt version
+  Return the valid message signatures depending on the Bolt version.
+  Accepts both integer versions (1, 2, 3) and tuple versions ({4, 4}, {5, 4}).
   """
-  @spec valid_signatures(integer()) :: [integer()]
+  @spec valid_signatures(integer() | {integer(), integer()}) :: [integer()]
+  def valid_signatures(bolt_version) when is_tuple(bolt_version) do
+    valid_signatures(elem(bolt_version, 0))
+  end
+
   def valid_signatures(bolt_version) when bolt_version <= 2 do
     @valid_v1_signatures
   end
 
   def valid_signatures(3) do
-    @valid_signatures
+    @valid_v3_signatures
+  end
+
+  def valid_signatures(4) do
+    @valid_v4_signatures
+  end
+
+  def valid_signatures(bolt_version) when bolt_version >= 5 do
+    @valid_v5_signatures
   end
 
   # Encode messages for bolt version 3
 
   # Encode HELLO message without auth token
-  @spec encode({Bolt.Sips.Internals.PackStream.Message.out_signature(), list()}, integer()) ::
+  @spec encode({Bolt.Sips.Internals.PackStream.Message.out_signature(), list()}, integer() | {integer(), integer()}) ::
           Bolt.Sips.Internals.PackStream.Message.encoded()
           | {:error, :not_implemented}
           | {:error, :invalid_message}
+
+  # Handle tuple versions by extracting major version (must be first clause)
+  def encode(data, bolt_version) when is_tuple(bolt_version) do
+    encode(data, extract_major_version(bolt_version))
+  end
+
   def encode({:hello, []}, 3) do
     encode({:hello, [{}]}, 3)
   end
@@ -160,7 +252,8 @@ defmodule Bolt.Sips.Internals.PackStream.Message.Encoder do
     encode({:begin, [metadata]}, 3)
   end
 
-  def encode({:begin, _}, _) do
+  # Catch-all for invalid BEGIN data in v3 only (v4+ has its own clauses later)
+  def encode({:begin, _}, bolt_version) when bolt_version <= 3 do
     {:error, :invalid_data}
   end
 
@@ -502,8 +595,201 @@ defmodule Bolt.Sips.Internals.PackStream.Message.Encoder do
   If not, fallback to previous bolt version
 
   If encoding function is not present in any of the bolt  version, an error will be raised
+
+  ## Bolt v4+ Changes
+
+  ### PULL (replaces PULL_ALL)
+  In v4+, PULL takes extra parameters: `{n: Integer, qid: Integer}`
+  - n: number of records to fetch (-1 for all)
+  - qid: query ID for explicit transactions (-1 for last statement)
+
+  ### DISCARD (replaces DISCARD_ALL)
+  Same as PULL, takes `{n: Integer, qid: Integer}`
+
+  ### HELLO
+  v4.1+ adds routing context to HELLO
+
+  ### RUN/BEGIN
+  v4+ adds database name support
   """
 
+  # Encode messages for bolt version 5+
+
+  # HELLO for v5+ (same as v4 but with bolt_agent and notification support)
+  # v5.2+ supports: notifications_minimum_severity
+  # v5.6+ supports: notifications_disabled_classifications
+  def encode({:hello, []}, bolt_version) when bolt_version >= 5 do
+    encode({:hello, [{}]}, bolt_version)
+  end
+
+  def encode({:hello, [auth]}, bolt_version) when bolt_version >= 5 do
+    do_encode(:hello, [auth_params_v4(auth)], bolt_version)
+  end
+
+  # HELLO with notification configuration for v5+
+  # Extra map can include: notifications_minimum_severity, notifications_disabled_classifications
+  def encode({:hello, [auth, extra]}, bolt_version) when bolt_version >= 5 and is_map(extra) do
+    params = auth_params_v4(auth) |> Map.merge(extra)
+    do_encode(:hello, [params], bolt_version)
+  end
+
+  # LOGON for v5.1+ - separate authentication from HELLO
+  def encode({:logon, [auth]}, bolt_version) when bolt_version >= 5 do
+    auth_map = case auth do
+      {} -> %{}
+      {username, password} ->
+        %{
+          scheme: "basic",
+          principal: username,
+          credentials: password
+        }
+    end
+    do_encode(:logon, [auth_map], bolt_version)
+  end
+
+  # LOGOFF for v5.1+
+  def encode({:logoff, []}, bolt_version) when bolt_version >= 5 do
+    do_encode(:logoff, [], bolt_version)
+  end
+
+  # TELEMETRY for v5.4+ - sends driver API usage info
+  def encode({:telemetry, [api]}, bolt_version) when bolt_version >= 5 do
+    do_encode(:telemetry, [%{api: api}], bolt_version)
+  end
+
+  # Encode messages for bolt version 4+
+
+  # HELLO for v4+ (includes routing context support)
+  def encode({:hello, []}, bolt_version) when bolt_version >= 4 do
+    encode({:hello, [{}]}, bolt_version)
+  end
+
+  def encode({:hello, [auth]}, bolt_version) when bolt_version >= 4 do
+    do_encode(:hello, [auth_params_v4(auth)], bolt_version)
+  end
+
+  def encode({:hello, [auth, extra]}, bolt_version) when bolt_version >= 4 do
+    params = auth_params_v4(auth) |> Map.merge(extra)
+    do_encode(:hello, [params], bolt_version)
+  end
+
+  # PULL for v4+ (replaces PULL_ALL, takes n and qid)
+  # Default: n=-1 (all records), qid=-1 (last statement)
+  # Parameters:
+  #   n: Integer - number of records to fetch (-1 for all)
+  #   qid: Integer - query ID for explicit transactions (-1 for last statement)
+  def encode({:pull, []}, bolt_version) when bolt_version >= 4 do
+    encode({:pull, [%{n: -1}]}, bolt_version)
+  end
+
+  def encode({:pull, [extra]}, bolt_version) when bolt_version >= 4 and is_map(extra) do
+    case validate_pull_discard_extra(extra) do
+      {:ok, validated_extra} ->
+        do_encode(:pull, [validated_extra], bolt_version)
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  # PULL_ALL backward compatibility for v4+ - delegates to PULL with n=-1
+  def encode({:pull_all, []}, bolt_version) when bolt_version >= 4 do
+    encode({:pull, [%{n: -1}]}, bolt_version)
+  end
+
+  # DISCARD for v4+ (replaces DISCARD_ALL, takes n and qid)
+  # Parameters:
+  #   n: Integer - number of records to discard (-1 for all)
+  #   qid: Integer - query ID for explicit transactions (-1 for last statement)
+  def encode({:discard, []}, bolt_version) when bolt_version >= 4 do
+    encode({:discard, [%{n: -1}]}, bolt_version)
+  end
+
+  def encode({:discard, [extra]}, bolt_version) when bolt_version >= 4 and is_map(extra) do
+    case validate_pull_discard_extra(extra) do
+      {:ok, validated_extra} ->
+        do_encode(:discard, [validated_extra], bolt_version)
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  # DISCARD_ALL backward compatibility for v4+ - delegates to DISCARD with n=-1
+  def encode({:discard_all, []}, bolt_version) when bolt_version >= 4 do
+    encode({:discard, [%{n: -1}]}, bolt_version)
+  end
+
+  # RUN for v4+ (adds database name support in extra)
+  def encode({:run, [statement]}, bolt_version) when bolt_version >= 4 do
+    do_encode(:run, [statement, %{}, %{}], bolt_version)
+  end
+
+  def encode({:run, [statement, params]}, bolt_version) when bolt_version >= 4 do
+    do_encode(:run, [statement, params, %{}], bolt_version)
+  end
+
+  def encode({:run, [statement, params, %Metadata{} = metadata]}, bolt_version)
+      when bolt_version >= 4 do
+    do_encode(:run, [statement, params, Metadata.to_map(metadata)], bolt_version)
+  end
+
+  def encode({:run, [statement, params, extra]}, bolt_version)
+      when bolt_version >= 4 and is_map(extra) do
+    do_encode(:run, [statement, params, extra], bolt_version)
+  end
+
+  # BEGIN for v4+ (adds database name support)
+  def encode({:begin, []}, bolt_version) when bolt_version >= 4 do
+    encode({:begin, [%{}]}, bolt_version)
+  end
+
+  def encode({:begin, [%Metadata{} = metadata]}, bolt_version) when bolt_version >= 4 do
+    do_encode(:begin, [Metadata.to_map(metadata)], bolt_version)
+  end
+
+  def encode({:begin, [%{} = extra]}, bolt_version) when bolt_version >= 4 do
+    do_encode(:begin, [extra], bolt_version)
+  end
+
+  # ROUTE for v4.3+ - queries routing table
+  def encode({:route, [routing_context, bookmarks, database]}, bolt_version)
+      when bolt_version >= 4 do
+    do_encode(:route, [routing_context, bookmarks, database], bolt_version)
+  end
+
+  def encode({:route, [routing_context, bookmarks]}, bolt_version)
+      when bolt_version >= 4 do
+    do_encode(:route, [routing_context, bookmarks, nil], bolt_version)
+  end
+
+  # COMMIT for v4+ (explicit handler instead of catch-all)
+  def encode({:commit, []}, bolt_version) when bolt_version >= 4 do
+    do_encode(:commit, [], bolt_version)
+  end
+
+  # ROLLBACK for v4+ (explicit handler instead of catch-all)
+  def encode({:rollback, []}, bolt_version) when bolt_version >= 4 do
+    do_encode(:rollback, [], bolt_version)
+  end
+
+  # RESET for v4+ (explicit handler instead of catch-all)
+  def encode({:reset, []}, bolt_version) when bolt_version >= 4 do
+    do_encode(:reset, [], bolt_version)
+  end
+
+  # GOODBYE for v4+ (explicit handler instead of catch-all)
+  def encode({:goodbye, []}, bolt_version) when bolt_version >= 4 do
+    do_encode(:goodbye, [], bolt_version)
+  end
+
+  # Simple messages for v4+ (no parameters)
+  def encode({message_type, data}, bolt_version)
+      when bolt_version >= 4 and message_type in @valid_v4_message_types do
+    do_encode(message_type, data, bolt_version)
+  end
+
+  # Fallback for versions beyond what we support
   def encode(data, bolt_version)
       when is_integer(bolt_version) and bolt_version > @last_bolt_version do
     encode(data, @last_bolt_version)
@@ -518,6 +804,9 @@ defmodule Bolt.Sips.Internals.PackStream.Message.Encoder do
     encode_message(message_type, signature, data, bolt_version)
   end
 
+  # Helper to extract major version from tuple format
+  defp extract_major_version({major, _minor}), do: major
+
   # Format the auth params for v1 to v2
   @spec auth_params_v1({} | {String.t(), String.t()}) :: map()
   defp auth_params_v1({}), do: %{}
@@ -530,7 +819,7 @@ defmodule Bolt.Sips.Internals.PackStream.Message.Encoder do
     }
   end
 
-  # Format the auth params
+  # Format the auth params for v3
   @spec auth_params({} | {String.t(), String.t()}) :: map()
   defp auth_params({}), do: user_agent()
 
@@ -543,8 +832,67 @@ defmodule Bolt.Sips.Internals.PackStream.Message.Encoder do
     |> Map.merge(user_agent())
   end
 
+  # Format the auth params for v4+ (includes routing support)
+  @spec auth_params_v4({} | {String.t(), String.t()}) :: map()
+  defp auth_params_v4({}), do: user_agent_v4()
+
+  defp auth_params_v4({username, password}) do
+    %{
+      scheme: "basic",
+      principal: username,
+      credentials: password
+    }
+    |> Map.merge(user_agent_v4())
+  end
+
   defp user_agent() do
     %{user_agent: client_name()}
+  end
+
+  # For v5.3+, bolt_agent is required and must be a map with string keys and string values
+  defp user_agent_v4() do
+    %{
+      user_agent: client_name(),
+      bolt_agent: %{
+        "product" => "BoltSips/" <> to_string(Application.spec(:bolt_sips, :vsn)),
+        "platform" => platform_info(),
+        "language" => "Elixir/" <> System.version()
+      }
+    }
+  end
+
+  defp platform_info() do
+    {os_family, os_name} = :os.type()
+    "#{os_family}/#{os_name}"
+  end
+
+  # Validate extra parameters for PULL and DISCARD messages
+  # Valid keys: n (required), qid (optional)
+  # n: Integer (-1 for all, or positive integer for specific count)
+  # qid: Integer (-1 for last statement, or non-negative for specific query)
+  @spec validate_pull_discard_extra(map()) :: {:ok, map()} | {:error, atom()}
+  defp validate_pull_discard_extra(extra) when is_map(extra) do
+    # Ensure n is present
+    extra = Map.put_new(extra, :n, -1)
+
+    # Validate n parameter
+    n = Map.get(extra, :n)
+
+    unless is_integer(n) and (n == -1 or n > 0) do
+      {:error, :invalid_n_parameter}
+    else
+      # Validate qid parameter if present
+      case Map.get(extra, :qid) do
+        nil ->
+          {:ok, extra}
+
+        qid when is_integer(qid) and (qid == -1 or qid >= 0) ->
+          {:ok, extra}
+
+        _ ->
+          {:error, :invalid_qid_parameter}
+      end
+    end
   end
 
   @doc """
