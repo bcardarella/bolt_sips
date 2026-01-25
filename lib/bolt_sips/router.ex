@@ -144,13 +144,13 @@ defmodule Bolt.Sips.Router do
   def handle_continue(:post_init, opts), do: {:noreply, _configure(opts)}
 
   defp _configure(opts) do
+    # Utils.default_config already normalizes SSL config and sets socket correctly
     options = Bolt.Sips.Utils.default_config(opts)
 
     prefix = Keyword.get(options, :prefix, :default)
 
-    ssl_or_sock = if(Keyword.get(options, :ssl), do: :ssl, else: Keyword.get(options, :socket))
-
-    user_options = Keyword.put(options, :socket, ssl_or_sock)
+    # Socket is already correctly set by default_config based on ssl option
+    user_options = options
     # Check for routing schemes: bolt+routing:// or neo4j://
     schema = Keyword.get(user_options, :schema, "bolt")
     with_routing? = schema =~ ~r/^(bolt\+routing|neo4j)$/i

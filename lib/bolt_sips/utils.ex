@@ -34,7 +34,8 @@ defmodule Bolt.Sips.Utils do
       @default_driver_options
       |> Keyword.merge(opts)
 
-    ssl_or_sock = if(Keyword.get(config, :ssl), do: :ssl, else: Keyword.get(config, :socket))
+    # Normalize SSL config and determine socket module
+    {ssl_config, ssl_or_sock} = normalize_ssl_config(config)
 
     config
     |> Keyword.put_new(:hostname, System.get_env("NEO4J_HOST") || @default_hostname)
@@ -51,6 +52,42 @@ defmodule Bolt.Sips.Utils do
     |> or_use_url_if_present
     |> Enum.reject(fn {_k, v} -> is_nil(v) end)
     |> Keyword.put(:socket, ssl_or_sock)
+    |> Keyword.put(:ssl, ssl_config)
+  end
+
+  # Normalize SSL configuration for OTP 26+ compatibility
+  # Returns {normalized_ssl_config, socket_module}
+  defp normalize_ssl_config(config) do
+    case Keyword.get(config, :ssl) do
+      # ssl: false or ssl: nil - use plain TCP
+      false ->
+        {false, Keyword.get(config, :socket, Bolt.Sips.Socket)}
+
+      nil ->
+        {false, Keyword.get(config, :socket, Bolt.Sips.Socket)}
+
+      # ssl: [] (empty list) - treat as disabled (common misconfiguration)
+      [] ->
+        {false, Keyword.get(config, :socket, Bolt.Sips.Socket)}
+
+      # ssl: true - expand to safe defaults for OTP 26+
+      # OTP 26+ defaults to verify: :verify_peer which requires CA certs
+      true ->
+        {default_ssl_options(), :ssl}
+
+      # ssl: [options] - merge with safe defaults
+      opts when is_list(opts) ->
+        merged_opts = Keyword.merge(default_ssl_options(), opts)
+        {merged_opts, :ssl}
+    end
+  end
+
+  # Default SSL options that work with OTP 26+
+  # In OTP 26+, :ssl.connect defaults to verify: :verify_peer
+  # which fails without CA certs. We default to verify_none for
+  # backward compatibility. Users can override with explicit options.
+  defp default_ssl_options do
+    [verify: :verify_none]
   end
 
   @doc """

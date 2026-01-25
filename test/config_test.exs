@@ -68,7 +68,9 @@ defmodule Config.Test do
     assert config[:hostname] == "hobby-happyHoHoHo.dbs.graphenedb.com"
     assert config[:basic_auth] == [username: "xmas", password: "Kr1ngl3"]
     assert config[:port] == 24786
-    assert config[:ssl] == true
+    # ssl: true is normalized to [verify: :verify_none] for OTP 26+ compatibility
+    assert config[:ssl] == [verify: :verify_none]
+    assert config[:socket] == :ssl
   end
 
   test "standard Bolt.Sips default configuration" do

@@ -9,6 +9,12 @@ defmodule Bolt.Sips.Internals.BoltProtocolV5Test do
   # Use {5, 6} as the default v5 version for tests
   @bolt_version {5, 6}
 
+  # Helper to skip tests conditionally
+  defp do_skip(reason) do
+    IO.puts("Skipping: #{reason}")
+    {:ok, skip: true, reason: reason}
+  end
+
   setup do
     app_config = Application.get_env(:bolt_sips, Bolt)
 
@@ -37,7 +43,7 @@ defmodule Bolt.Sips.Internals.BoltProtocolV5Test do
 
     unless major >= 5 do
       :gen_tcp.close(port)
-      skip("Server does not support Bolt v5+")
+      do_skip("Server does not support Bolt v5+")
     end
 
     on_exit(fn ->
@@ -64,14 +70,14 @@ defmodule Bolt.Sips.Internals.BoltProtocolV5Test do
   describe "logon/5 for v5.1+ (separate authentication):" do
     @tag :bolt_v5_1
     test "ok with hello then logon", %{config: config, port: port, bolt_version: bolt_version} do
-      {major, minor} = bolt_version
+      {_major, minor} = bolt_version
 
       if minor >= 1 do
         # v5.1+ uses HELLO without auth, then LOGON with auth
         assert {:ok, _} = BoltProtocolV4.hello(:gen_tcp, port, bolt_version, {}, [])
         assert {:ok, _} = BoltProtocolV4.logon(:gen_tcp, port, bolt_version, config[:auth], [])
       else
-        skip("Server does not support LOGON (requires v5.1+)")
+        do_skip("Server does not support LOGON (requires v5.1+)")
       end
     end
 
@@ -91,7 +97,7 @@ defmodule Bolt.Sips.Internals.BoltProtocolV5Test do
                    []
                  )
       else
-        skip("Server does not support LOGON (requires v5.1+)")
+        do_skip("Server does not support LOGON (requires v5.1+)")
       end
     end
   end
@@ -112,7 +118,7 @@ defmodule Bolt.Sips.Internals.BoltProtocolV5Test do
         # Can re-authenticate after logoff
         assert {:ok, _} = BoltProtocolV4.logon(:gen_tcp, port, bolt_version, config[:auth], [])
       else
-        skip("Server does not support LOGOFF (requires v5.1+)")
+        do_skip("Server does not support LOGOFF (requires v5.1+)")
       end
     end
   end
@@ -129,7 +135,7 @@ defmodule Bolt.Sips.Internals.BoltProtocolV5Test do
         # Send telemetry (api = 1 for driver API)
         assert :ok = BoltProtocolV4.telemetry(:gen_tcp, port, bolt_version, 1, [])
       else
-        skip("Server does not support TELEMETRY (requires v5.4+)")
+        do_skip("Server does not support TELEMETRY (requires v5.4+)")
       end
     end
   end

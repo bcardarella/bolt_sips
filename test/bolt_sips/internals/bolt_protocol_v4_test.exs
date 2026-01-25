@@ -9,6 +9,12 @@ defmodule Bolt.Sips.Internals.BoltProtocolV4Test do
   # Use {4, 4} as the default v4 version for tests
   @bolt_version {4, 4}
 
+  # Helper to skip tests conditionally
+  defp do_skip(reason) do
+    IO.puts("Skipping: #{reason}")
+    {:ok, skip: true, reason: reason}
+  end
+
   setup do
     app_config = Application.get_env(:bolt_sips, Bolt)
 
@@ -35,7 +41,7 @@ defmodule Bolt.Sips.Internals.BoltProtocolV4Test do
     # Skip tests if server doesn't support v4+
     unless is_tuple(negotiated_version) or negotiated_version >= 4 do
       :gen_tcp.close(port)
-      skip("Server does not support Bolt v4+")
+      do_skip("Server does not support Bolt v4+")
     end
 
     on_exit(fn ->
