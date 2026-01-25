@@ -38,6 +38,21 @@ defmodule Bolt.Sips.Protocol do
     socket = conf[:socket]
     default_socket_options = [packet: :raw, mode: :binary, active: false]
 
+    # Debug logging to help diagnose connection issues during app boot
+    # This can be removed once the Phoenix boot issue is resolved
+    if Application.get_env(:bolt_sips, :debug_connect, false) do
+      Logger.debug("""
+      [Bolt.Sips.Protocol] connect called with:
+        raw opts keys: #{inspect(Keyword.keys(opts))}
+        hostname from opts: #{inspect(opts[:hostname])}
+        hostname from conf: #{inspect(conf[:hostname])}
+        resolved host: #{inspect(host)}
+        port: #{inspect(port)}
+        socket module: #{inspect(socket)}
+        ssl config: #{inspect(conf[:ssl])}
+      """)
+    end
+
     socket_opts =
       case conf[:ssl] do
         list when is_list(list) -> Keyword.merge(default_socket_options, conf[:ssl])
@@ -365,7 +380,7 @@ defmodule Bolt.Sips.Protocol do
   # In OTP 27+, passing an IP address as a charlist may trigger DNS lookup
   # which fails with :nxdomain. This function ensures IP addresses are
   # passed as tuples to avoid DNS lookup.
-  defp _to_hostname(hostname) when is_binary(hostname) do
+  defp _to_hostname(hostname) when is_binary(hostname) and byte_size(hostname) > 0 do
     charlist = String.to_charlist(hostname)
     case :inet.parse_address(charlist) do
       {:ok, ip_tuple} -> ip_tuple  # IP address - use tuple
@@ -373,7 +388,7 @@ defmodule Bolt.Sips.Protocol do
     end
   end
 
-  defp _to_hostname(hostname) when is_list(hostname) do
+  defp _to_hostname(hostname) when is_list(hostname) and length(hostname) > 0 do
     case :inet.parse_address(hostname) do
       {:ok, ip_tuple} -> ip_tuple  # IP address - use tuple
       {:error, _} -> hostname       # Hostname - keep as charlist
@@ -381,5 +396,11 @@ defmodule Bolt.Sips.Protocol do
   end
 
   defp _to_hostname(hostname) when is_tuple(hostname), do: hostname  # Already a tuple
-  defp _to_hostname(hostname), do: hostname
+
+  # Handle nil, empty string, empty list - fall back to localhost
+  # This can happen if config is not properly loaded during application boot
+  defp _to_hostname(_) do
+    Logger.warning("[Bolt.Sips] hostname is nil or empty, falling back to localhost")
+    ~c"localhost"
+  end
 end

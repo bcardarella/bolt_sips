@@ -105,6 +105,27 @@ defmodule Bolt.Sips.HostnameTest do
     test "to_connect_address handles tuple input (passthrough)" do
       assert to_connect_address({127, 0, 0, 1}) == {127, 0, 0, 1}
     end
+
+    test "to_connect_address handles nil gracefully" do
+      # nil should fall back to localhost as charlist
+      assert to_connect_address(nil) == ~c"localhost"
+    end
+
+    test "to_connect_address handles empty string" do
+      # Empty string should fall back to localhost
+      assert to_connect_address("") == ~c"localhost"
+    end
+
+    test "default_config with empty opts uses localhost" do
+      # When no hostname is provided, default_config should use localhost
+      config = Bolt.Sips.Utils.default_config([])
+      assert config[:hostname] == "localhost"
+    end
+
+    test "default_config preserves explicit hostname" do
+      config = Bolt.Sips.Utils.default_config(hostname: "127.0.0.1")
+      assert config[:hostname] == "127.0.0.1"
+    end
   end
 
   # Helper functions that should be implemented in Utils or Protocol
@@ -142,7 +163,7 @@ defmodule Bolt.Sips.HostnameTest do
 
   defp to_connect_address(host) when is_tuple(host), do: host
 
-  defp to_connect_address(host) when is_binary(host) do
+  defp to_connect_address(host) when is_binary(host) and byte_size(host) > 0 do
     charlist = String.to_charlist(host)
     case :inet.parse_address(charlist) do
       {:ok, ip_tuple} -> ip_tuple
@@ -150,10 +171,13 @@ defmodule Bolt.Sips.HostnameTest do
     end
   end
 
-  defp to_connect_address(host) when is_list(host) do
+  defp to_connect_address(host) when is_list(host) and length(host) > 0 do
     case :inet.parse_address(host) do
       {:ok, ip_tuple} -> ip_tuple
       {:error, _} -> host
     end
   end
+
+  # Handle nil, empty string, empty list - fall back to localhost
+  defp to_connect_address(_), do: ~c"localhost"
 end
