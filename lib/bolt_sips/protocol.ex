@@ -188,15 +188,39 @@ defmodule Bolt.Sips.Protocol do
   def disconnect(_err, %ConnData{sock: sock, bolt_version: bolt_version, configuration: conf})
       when is_tuple(bolt_version) or bolt_version >= 3 do
     socket = conf[:socket]
-    :ok = BoltProtocol.goodbye(socket, sock, bolt_version)
-    socket.close(sock)
+
+    # Send GOODBYE message, but don't require success
+    # The socket may already be closed by the server (e.g., Neo4j Aura idle timeout)
+    try do
+      BoltProtocol.goodbye(socket, sock, bolt_version)
+    rescue
+      _ -> :ok
+    catch
+      _, _ -> :ok
+    end
+
+    # Close the socket, ignoring errors if already closed
+    try do
+      socket.close(sock)
+    rescue
+      _ -> :ok
+    catch
+      _, _ -> :ok
+    end
 
     :ok
   end
 
   @doc "Callback for DBConnection.disconnect/1"
   def disconnect(_err, %ConnData{sock: sock, configuration: conf}) do
-    conf[:socket].close(sock)
+    # Close the socket, ignoring errors if already closed
+    try do
+      conf[:socket].close(sock)
+    rescue
+      _ -> :ok
+    catch
+      _, _ -> :ok
+    end
 
     :ok
   end

@@ -6,7 +6,70 @@ defmodule Bolt.Sips.DisconnectTest do
   alias Bolt.Sips.Protocol
   alias Bolt.Sips.Protocol.ConnData
 
-  describe "disconnect/2 handler robustness" do
+  describe "disconnect/2 with v3+ (GOODBYE message)" do
+    test "handles goodbye failure gracefully when server already closed connection" do
+      # This simulates the scenario where Neo4j Aura closes an idle connection
+      # before the client tries to disconnect. The GOODBYE message fails because
+      # the socket is already closed.
+
+      # Create a ConnData with a closed/invalid socket
+      # We use a port that doesn't exist to simulate a closed connection
+      conn_data = %ConnData{
+        sock: nil,  # No valid socket - simulates closed connection
+        bolt_version: {5, 6},
+        configuration: [socket: Bolt.Sips.Socket],
+        server_hints: nil
+      }
+
+      # This should NOT crash with MatchError
+      # Previously: :ok = BoltProtocol.goodbye(...) would crash when goodbye returns error
+      # The fix should ignore goodbye failures since we're disconnecting anyway
+      result = Protocol.disconnect(:server_closed, conn_data)
+      assert result == :ok
+    end
+
+    test "handles goodbye failure for v3 bolt version" do
+      conn_data = %ConnData{
+        sock: nil,
+        bolt_version: 3,
+        configuration: [socket: Bolt.Sips.Socket],
+        server_hints: nil
+      }
+
+      result = Protocol.disconnect(:timeout, conn_data)
+      assert result == :ok
+    end
+
+    test "handles goodbye failure for v4 tuple bolt version" do
+      conn_data = %ConnData{
+        sock: nil,
+        bolt_version: {4, 4},
+        configuration: [socket: Bolt.Sips.Socket],
+        server_hints: nil
+      }
+
+      result = Protocol.disconnect(:normal, conn_data)
+      assert result == :ok
+    end
+  end
+
+  describe "disconnect/2 with v1/v2 (no GOODBYE)" do
+    test "handles close failure gracefully" do
+      conn_data = %ConnData{
+        sock: nil,
+        bolt_version: 2,
+        configuration: [socket: Bolt.Sips.Socket],
+        server_hints: nil
+      }
+
+      # v1/v2 doesn't send GOODBYE, just closes socket
+      # Should handle socket.close failure gracefully
+      result = Protocol.disconnect(:normal, conn_data)
+      assert result == :ok
+    end
+  end
+
+  describe "disconnect/2 handler robustness (unexpected state)" do
     test "handles unexpected map state gracefully" do
       # This is the bug case - when state is a map instead of ConnData struct
       # This can happen in certain DBConnection error scenarios
