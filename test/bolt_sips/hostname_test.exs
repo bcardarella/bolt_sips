@@ -126,6 +126,24 @@ defmodule Bolt.Sips.HostnameTest do
       config = Bolt.Sips.Utils.default_config(hostname: "127.0.0.1")
       assert config[:hostname] == "127.0.0.1"
     end
+
+    test "default_config with url: nil does not overwrite explicit hostname" do
+      # This was the root cause of the Phoenix boot :nxdomain issue
+      # url: nil would parse to %URI{host: nil} and overwrite hostname
+      config = Bolt.Sips.Utils.default_config(hostname: "127.0.0.1", port: 7687, url: nil)
+      assert config[:hostname] == "127.0.0.1"
+    end
+
+    test "default_config with url: '' does not overwrite explicit hostname" do
+      config = Bolt.Sips.Utils.default_config(hostname: "127.0.0.1", port: 7687, url: "")
+      assert config[:hostname] == "127.0.0.1"
+    end
+
+    test "default_config with valid url overrides hostname" do
+      config = Bolt.Sips.Utils.default_config(hostname: "127.0.0.1", url: "bolt://neo4j.example.com:7688")
+      assert config[:hostname] == "neo4j.example.com"
+      assert config[:port] == 7688
+    end
   end
 
   # Helper functions that should be implemented in Utils or Protocol

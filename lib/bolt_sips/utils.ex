@@ -137,11 +137,12 @@ defmodule Bolt.Sips.Utils do
 
   @doc false
   defp or_use_url_if_present(config) do
-    if Keyword.has_key?(config, :url) do
-      f =
-        config[:url]
-        |> to_string()
-        |> URI.parse()
+    url = Keyword.get(config, :url)
+
+    # Only process URL if it's a non-empty string
+    # This prevents url: nil or url: "" from overwriting explicit hostname
+    if is_binary(url) and byte_size(url) > 0 do
+      f = URI.parse(url)
 
       schema = if f.scheme, do: f.scheme, else: "bolt"
 
