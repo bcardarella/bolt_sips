@@ -17,11 +17,17 @@ defmodule Bolt.Sips.JsonImplementationsTest do
   end
 
   test "Jason implementation OK" do
-    assert result(:jason) == Jason.encode!(fixture())
+    # Compare decoded structures to avoid map key ordering differences
+    expected = Jason.decode!(result(:jason))
+    actual = Jason.decode!(Jason.encode!(fixture()))
+    assert expected == actual
   end
 
   test "Poison implementation OK" do
-    assert result(:poison) == Poison.encode!(fixture())
+    # Compare decoded structures to avoid map key ordering differences
+    expected = Poison.decode!(result(:poison))
+    actual = Poison.decode!(Poison.encode!(fixture()))
+    assert expected == actual
   end
 
   defp fixture() do

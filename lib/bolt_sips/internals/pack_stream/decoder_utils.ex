@@ -7,6 +7,11 @@ defmodule Bolt.Sips.Internals.PackStream.DecoderUtils do
 
       @last_version Bolt.Sips.Internals.BoltVersionHelper.last()
 
+      # Handle tuple versions by extracting major version
+      def decode(data, {major, _minor}) when is_integer(major) do
+        decode(data, major)
+      end
+
       def decode(data, bolt_version) when is_integer(bolt_version) do
         if bolt_version > @last_version do
           decode(data, @last_version)

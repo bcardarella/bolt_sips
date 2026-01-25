@@ -105,19 +105,29 @@ defmodule Bolt.Sips.Internals.PackStream.EncoderTest do
       end
 
       test "Datetime with timezone offset (bolt_version: #{bolt_version})" do
-        assert <<0xB3, 0x46, _::binary>> =
-                 :erlang.iolist_to_binary(Encoder.encode(
-                   Types.DateTimeWithTZOffset.create(~N[2016-05-24 13:26:08.543], 7200),
-                   unquote(bolt_version)
-                 ))
+        encoded = :erlang.iolist_to_binary(Encoder.encode(
+          Types.DateTimeWithTZOffset.create(~N[2016-05-24 13:26:08.543], 7200),
+          unquote(bolt_version)
+        ))
+        # v5+ uses signature 0x49, v2-v4 uses 0x46
+        if unquote(bolt_version) >= 5 do
+          assert <<0xB3, 0x49, _::binary>> = encoded
+        else
+          assert <<0xB3, 0x46, _::binary>> = encoded
+        end
       end
 
       test "Datetime with timezone id (bolt_version: #{bolt_version})" do
-        assert <<0xB3, 0x66, _::binary>> =
-                 :erlang.iolist_to_binary(Encoder.encode(
-                   TypesHelper.datetime_with_micro(~N[2016-05-24 13:26:08.543], "Europe/Berlin"),
-                   unquote(bolt_version)
-                 ))
+        encoded = :erlang.iolist_to_binary(Encoder.encode(
+          TypesHelper.datetime_with_micro(~N[2016-05-24 13:26:08.543], "Europe/Berlin"),
+          unquote(bolt_version)
+        ))
+        # v5+ uses signature 0x69, v2-v4 uses 0x66
+        if unquote(bolt_version) >= 5 do
+          assert <<0xB3, 0x69, _::binary>> = encoded
+        else
+          assert <<0xB3, 0x66, _::binary>> = encoded
+        end
       end
 
       test "Duration (bolt_version: #{bolt_version})" do

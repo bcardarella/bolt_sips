@@ -160,43 +160,77 @@ defmodule Bolt.Sips.Internals.PackStream.DecoderImplV1 do
 
       ######### SPECIAL STRUCTS
 
-      # Node
+      # Node - handles both old (3 fields) and new (4 fields with element_id) formats
       def decode({@node_marker, struct, struct_size}, bolt_version)
           when bolt_version <= @last_version do
-        {[id, labels, props], rest} = decode_struct(struct, struct_size, bolt_version)
+        {decoded, rest} = decode_struct(struct, struct_size, bolt_version)
 
-        node = %Types.Node{id: id, labels: labels, properties: props}
+        node =
+          case decoded do
+            [id, labels, props, element_id] ->
+              %Types.Node{id: id, labels: labels, properties: props, element_id: element_id}
+
+            [id, labels, props] ->
+              %Types.Node{id: id, labels: labels, properties: props}
+          end
 
         [node | rest]
       end
 
-      # Relationship
+      # Relationship - handles both old (5 fields) and new (8 fields with element_ids) formats
       def decode({@relationship_marker, struct, struct_size}, bolt_version)
           when bolt_version <= @last_version do
-        {[id, start_node, end_node, type, props], rest} =
-          decode_struct(struct, struct_size, bolt_version)
+        {decoded, rest} = decode_struct(struct, struct_size, bolt_version)
 
-        relationship = %Types.Relationship{
-          id: id,
-          start: start_node,
-          end: end_node,
-          type: type,
-          properties: props
-        }
+        relationship =
+          case decoded do
+            [id, start_node, end_node, type, props, element_id, start_element_id, end_element_id] ->
+              %Types.Relationship{
+                id: id,
+                start: start_node,
+                end: end_node,
+                type: type,
+                properties: props,
+                element_id: element_id,
+                start_element_id: start_element_id,
+                end_element_id: end_element_id
+              }
+
+            [id, start_node, end_node, type, props] ->
+              %Types.Relationship{
+                id: id,
+                start: start_node,
+                end: end_node,
+                type: type,
+                properties: props
+              }
+          end
 
         [relationship | rest]
       end
 
-      # UnboundedRelationship
+      # UnboundedRelationship - handles both old (3 fields) and new (4 fields with element_id) formats
       def decode({@unbounded_relationship_marker, struct, struct_size}, bolt_version)
           when bolt_version <= @last_version do
-        {[id, type, props], rest} = decode_struct(struct, struct_size, bolt_version)
+        {decoded, rest} = decode_struct(struct, struct_size, bolt_version)
 
-        unbounded_relationship = %Types.UnboundRelationship{
-          id: id,
-          type: type,
-          properties: props
-        }
+        unbounded_relationship =
+          case decoded do
+            [id, type, props, element_id] ->
+              %Types.UnboundRelationship{
+                id: id,
+                type: type,
+                properties: props,
+                element_id: element_id
+              }
+
+            [id, type, props] ->
+              %Types.UnboundRelationship{
+                id: id,
+                type: type,
+                properties: props
+              }
+          end
 
         [unbounded_relationship | rest]
       end

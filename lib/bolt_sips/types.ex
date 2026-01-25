@@ -33,9 +33,12 @@ defmodule Bolt.Sips.Types do
 
   defmodule Entity do
     @moduledoc """
-      base structure for Node and Relationship
+      base structure for Node and Relationship.
+
+      In Neo4j 5+, entities include an element_id field which is a string-based
+      unique identifier (e.g., "4:21638ec7-fd90-4c3f-9822-c97b656bc7b5:208").
     """
-    @base_fields [id: nil, properties: nil]
+    @base_fields [id: nil, properties: nil, element_id: nil]
     defmacro __using__(fields) do
       fields = @base_fields ++ fields
 
@@ -73,14 +76,20 @@ defmodule Bolt.Sips.Types do
       a unique identifier (within the scope of its origin graph), identifiers
       for the start and end nodes of that relationship, a type and a map of properties.
 
+      In Neo4j 5+, relationships include element_id, start_element_id, and end_element_id
+      which are string-based unique identifiers.
+
       https://github.com/boltprotocol/boltprotocol/blob/master/v1/_serialization.asciidoc#relationship
     """
 
-    use Entity, start: nil, end: nil, type: nil
+    use Entity, start: nil, end: nil, type: nil, start_element_id: nil, end_element_id: nil
 
     @type t :: %__MODULE__{
             id: integer,
-            properties: map
+            properties: map,
+            element_id: String.t() | nil,
+            start_element_id: String.t() | nil,
+            end_element_id: String.t() | nil
           }
   end
 

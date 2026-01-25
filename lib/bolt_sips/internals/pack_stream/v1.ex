@@ -123,7 +123,7 @@ defmodule Bolt.Sips.Internals.PackStream.V1 do
 
       # Float
 
-      defp do_call_encode(:float, number, bolt_version) when bolt_version <= 3 do
+      defp do_call_encode(:float, number, bolt_version) when bolt_version <= @last_version do
         <<@float_marker, number::float>>
       end
 

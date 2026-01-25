@@ -11,17 +11,12 @@ defmodule Bolt.Sips do
 
   To start, add the `:bolt_sips` dependency to you project, run `mix do deps.get, compile` on it and then you can quickly start experimenting with Neo4j from the convenience of your IEx shell. Example:
 
-      iex> {:ok, _neo} = Bolt.Sips.start_link(url: "bolt://neo4j:test@localhost")
-      {:ok, #PID<0.250.0>}
-      iex>   conn = Bolt.Sips.conn()
-      #PID<0.256.0>
-      iex> Bolt.Sips.query!(conn, "RETURN 1 as n")
-      %Bolt.Sips.Response{
-        records: [[1]],
-        results: [%{"n" => 1}]
-      }
+      {:ok, _neo} = Bolt.Sips.start_link(url: "bolt://localhost")
+      conn = Bolt.Sips.conn()
+      Bolt.Sips.query!(conn, "RETURN 1 as n")
+      # => %Bolt.Sips.Response{records: [[1]], results: [%{"n" => 1}]}
 
-  the example above presumes that you have a Neo4j server available locally, using the Bolt protocol and requiring authentication.
+  the example above presumes that you have a Neo4j server available locally, using the Bolt protocol.
   """
 
   use Supervisor
@@ -74,7 +69,7 @@ defmodule Bolt.Sips do
 
   Example with a configuration defined in the `config/dev.exs`:
 
-      {:ok, _neo} = Bolt.Sips.start_link(url: "bolt://neo4j:test@localhost")
+      {:ok, _neo} = Bolt.Sips.start_link(url: "bolt://localhost")
 
       conn = Bolt.Sips.conn()
       Bolt.Sips.query!(conn, "return 1 as n")
@@ -82,16 +77,13 @@ defmodule Bolt.Sips do
   """
   @spec start_link(Keyword.t()) :: Supervisor.on_start()
   def start_link(opts) do
-    with nil <- Process.whereis(__MODULE__) do
-      Supervisor.start_link(__MODULE__, opts, name: __MODULE__)
-    else
-      pid ->
+    case Process.whereis(__MODULE__) do
+      nil ->
+        Supervisor.start_link(__MODULE__, opts, name: __MODULE__)
+
+      pid when is_pid(pid) ->
         Router.configure(opts)
         {:ok, pid}
-
-      {pid, node} ->
-        Router.configure(opts)
-        {:ok, {pid, node}}
     end
   end
 
@@ -232,10 +224,10 @@ defmodule Bolt.Sips do
 
   The authentication credentials will be sanitized, if any
 
-  ### Examples:
+  ### Example:
 
-  iex> Bolt.Sips.info()
-  %{default: %{connections: %{direct: %{"localhost:7687" => 0}, routing_query: nil, zorba: %{"localhost:7687" => 0}}, user_options: [basic_auth: [username: "******", password: "******"], socket: Bolt.Sips.Socket, port: 7687, routing_context: %{}, schema: "bolt", hostname: "localhost", timeout: 15000, ssl: false, with_etls: false, prefix: :default, url: "bolt://localhost", pool_size: 10, max_overflow: 2, role: :zorba]}}
+      Bolt.Sips.info()
+      # => %{default: %{connections: %{direct: %{"localhost:7687" => 0}}, user_options: [...]}}
   """
   @spec info() :: map
   def info(), do: sanitized_info(Bolt.Sips.Router.info())

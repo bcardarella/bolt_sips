@@ -282,7 +282,10 @@ defmodule Query.Test do
     conn = context[:conn]
 
     assert %Response{stats: stats} = Bolt.Sips.query!(conn, "CREATE (a:Person {name:'Bob'})")
-    assert stats == %{"labels-added" => 1, "nodes-created" => 1, "properties-set" => 1}
+    # Check required keys are present (Neo4j 2025.12+ may return additional metadata like "contains-updates")
+    assert stats["labels-added"] == 1
+    assert stats["nodes-created"] == 1
+    assert stats["properties-set"] == 1
 
     assert ["Bob"] ==
              Bolt.Sips.query!(conn, "MATCH (a:Person {name: 'Bob'}) RETURN a.name AS name")
@@ -294,12 +297,13 @@ defmodule Query.Test do
     assert stats["nodes-deleted"] == 1
   end
 
-  test "Cypher version 3", context do
+  test "Cypher version", context do
     conn = context[:conn]
 
     assert %Response{plan: plan} = Bolt.Sips.query!(conn, "EXPLAIN RETURN 1")
     refute plan == nil
-    assert Regex.match?(~r/CYPHER [3|4]/iu, plan["args"]["version"])
+    # Neo4j 2025.12+ returns just "5", older versions return "CYPHER 3" or "CYPHER 4"
+    assert Regex.match?(~r/^(CYPHER )?[345]$/iu, plan["args"]["version"])
   end
 
   test "EXPLAIN MATCH (n), (m) RETURN n, m", context do
@@ -311,19 +315,13 @@ defmodule Query.Test do
     refute notifications == nil
     refute plan == nil
 
-    if Regex.match?(~r/CYPHER 3/iu, plan["args"]["version"]) do
-      assert "CartesianProduct" ==
-               plan["children"]
-               |> List.first()
-               |> Map.get("operatorType")
-    else
-      assert(
-        "CartesianProduct@neo4j" ==
-          plan["children"]
-          |> List.first()
-          |> Map.get("operatorType")
-      )
-    end
+    # Cypher 3 uses "CartesianProduct", Cypher 4+ uses "CartesianProduct@neo4j"
+    operator_type =
+      plan["children"]
+      |> List.first()
+      |> Map.get("operatorType")
+
+    assert operator_type in ["CartesianProduct", "CartesianProduct@neo4j"]
   end
 
   test "can execute a query after a failure", context do

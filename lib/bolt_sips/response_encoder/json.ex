@@ -99,8 +99,14 @@ defimpl ResponseEncoder.Json,
   for: [Types.Node, Types.Relationship, Types.UnboundRelationship, Types.Path] do
   @spec encode(struct()) :: map()
   def encode(value) do
+    # Filter out nil element_id fields to maintain backward compatibility
+    # These fields only exist in Neo4j 5+ and should not appear if not set
+    nil_element_id_keys = [:element_id, :start_element_id, :end_element_id]
+
     value
     |> Map.from_struct()
+    |> Enum.reject(fn {k, v} -> k in nil_element_id_keys and is_nil(v) end)
+    |> Map.new()
     |> ResponseEncoder.Json.encode()
   end
 end

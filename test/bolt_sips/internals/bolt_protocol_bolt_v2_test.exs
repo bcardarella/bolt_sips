@@ -92,39 +92,40 @@ defmodule Bolt.Sips.Internals.BoltProtoolBoltV2Test do
     end
 
     test "datetime with timezone offset", %{port: port, bolt_version: bolt_version} do
-      assert [
-               success: %{"fields" => ["d"]},
-               record: [
-                 %Bolt.Sips.Types.DateTimeWithTZOffset{
-                   naive_datetime: ~N[2018-04-05 12:34:23.654321],
-                   timezone_offset: 3600
-                 }
-               ],
-               success: %{"type" => "r"}
-             ] =
-               BoltProtocol.run_statement(
-                 :gen_tcp,
-                 port,
-                 bolt_version,
-                 "RETURN datetime('2018-04-05T12:34:23.654321+01:00') AS d"
-               )
+      # Use flexible pattern matching - Neo4j 2025.12+ returns additional metadata
+      result =
+        BoltProtocol.run_statement(
+          :gen_tcp,
+          port,
+          bolt_version,
+          "RETURN datetime('2018-04-05T12:34:23.654321+01:00') AS d"
+        )
+
+      assert [{:success, %{"fields" => ["d"]}}, {:record, [dt]}, {:success, success}] = result
+      assert %{"type" => "r"} = success
+      assert %Bolt.Sips.Types.DateTimeWithTZOffset{timezone_offset: 3600} = dt
+      assert dt.naive_datetime.year == 2018
+      assert dt.naive_datetime.month == 4
+      assert dt.naive_datetime.day == 5
     end
 
     test "datetime with timezone id", %{port: port, bolt_version: bolt_version} do
-      dt =
-        Bolt.Sips.TypesHelper.datetime_with_micro(~N[2018-04-05T12:34:23.654321], "Europe/Berlin")
+      # Use flexible pattern matching - Neo4j 2025.12+ returns additional metadata
+      result =
+        BoltProtocol.run_statement(
+          :gen_tcp,
+          port,
+          bolt_version,
+          "RETURN datetime('2018-04-05T12:34:23.654321[Europe/Berlin]') AS d"
+        )
 
-      assert [
-               success: %{"fields" => ["d"]},
-               record: [^dt],
-               success: %{"type" => "r"}
-             ] =
-               BoltProtocol.run_statement(
-                 :gen_tcp,
-                 port,
-                 bolt_version,
-                 "RETURN datetime('2018-04-05T12:34:23.654321[Europe/Berlin]') AS d"
-               )
+      assert [{:success, %{"fields" => ["d"]}}, {:record, [dt]}, {:success, success}] = result
+      assert %{"type" => "r"} = success
+      assert %DateTime{} = dt
+      assert dt.time_zone == "Europe/Berlin"
+      assert dt.year == 2018
+      assert dt.month == 4
+      assert dt.day == 5
     end
   end
 

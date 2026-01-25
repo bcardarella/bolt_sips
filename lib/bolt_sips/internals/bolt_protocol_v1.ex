@@ -11,6 +11,9 @@ defmodule Bolt.Sips.Internals.BoltProtocolV1 do
 
   See [http://boltprotocol.org/v1/#handshake](http://boltprotocol.org/v1/#handshake)
 
+  For Bolt v4+, the version format uses major.minor encoding:
+  <<reserved::8, range::8, minor::8, major::8>>
+
   ## Options
 
   See "Shared options" in `Bolt.Sips.Internals.BoltProtocolHelper` documentation.
@@ -21,35 +24,41 @@ defmodule Bolt.Sips.Internals.BoltProtocolV1 do
       {:ok, bolt_version}
   """
   @spec handshake(atom(), port(), Keyword.t()) ::
-          {:ok, integer()} | {:error, Bolt.Sips.Internals.Error.t()}
+          {:ok, integer() | {integer(), integer()}} | {:error, Bolt.Sips.Internals.Error.t()}
   def handshake(transport, port, options \\ [recv_timeout: 15_000]) do
     recv_timeout = BoltProtocolHelper.get_recv_timeout(options)
-    max_version = BoltVersionHelper.last()
 
-    # Define version list. Should be a 4 integer list
-    # Example: [1, 0, 0, 0]
-    versions =
-      ((max_version..0
-        |> Enum.into([])) ++ [0, 0, 0])
-      |> Enum.take(4)
+    # Build version list: [5, 4, 3, 0] - highest to lowest, padded with zeros
+    # Each version is encoded according to its format requirements
+    available = BoltVersionHelper.available_versions()
+    versions_to_send = (Enum.reverse(available) ++ [0, 0, 0]) |> Enum.take(4)
 
     Bolt.Sips.Internals.Logger.log_message(
       :client,
       :handshake,
-      "#{inspect(@hs_magic, base: :hex)} #{inspect(versions)}"
+      "#{inspect(@hs_magic, base: :hex)} #{inspect(versions_to_send)}"
     )
 
-    data = @hs_magic <> Enum.into(versions, <<>>, fn version_ -> <<version_::32>> end)
+    # Encode each version appropriately (v4+ use major.minor format)
+    encoded_versions =
+      Enum.into(versions_to_send, <<>>, fn
+        0 -> <<0::32>>
+        version -> BoltVersionHelper.encode_version(version)
+      end)
+
+    data = @hs_magic <> encoded_versions
     transport.send(port, data)
 
     case transport.recv(port, 4, recv_timeout) do
-      {:ok, <<version::32>> = packet} when version <= max_version ->
+      {:ok, <<0, 0, 0, 0>>} ->
+        # Server doesn't support any of our versions
+        {:error, Error.exception("No supported Bolt version", port, :handshake)}
+
+      {:ok, packet} ->
+        version = BoltVersionHelper.decode_version(packet)
         Bolt.Sips.Internals.Logger.log_message(:server, :handshake, packet, :hex)
         Bolt.Sips.Internals.Logger.log_message(:server, :handshake, version)
         {:ok, version}
-
-      {:ok, other} ->
-        {:error, Error.exception(other, port, :handshake)}
 
       other ->
         {:error, Error.exception(other, port, :handshake)}

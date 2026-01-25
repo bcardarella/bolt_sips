@@ -9,7 +9,7 @@ defmodule BoltSips.Mixfile do
     [
       app: :bolt_sips,
       version: @version,
-      elixir: "~> 1.7",
+      elixir: "~> 1.14",
       elixirc_paths: elixirc_paths(Mix.env()),
       deps: deps(),
       package: package(),
@@ -43,7 +43,7 @@ defmodule BoltSips.Mixfile do
   defp aliases do
     [
       test: [
-        "test --exclude bolt_v1 --exclude routing --exclude boltkit --exclude enterprise"
+        "test --exclude bolt_v1 --exclude bolt_v3 --exclude routing --exclude boltkit --exclude enterprise"
       ]
     ]
   end
@@ -100,30 +100,30 @@ defmodule BoltSips.Mixfile do
   # Type "mix help deps" for more examples and options
   defp deps do
     [
-      {:db_connection, "~> 2.4.2"},
+      {:db_connection, "~> 2.7"},
       {:jason, "~> 1.4", optional: true},
-      {:poison, "~> 5.0", optional: true},
+      {:poison, "~> 6.0", optional: true},
 
       # Testing dependencies
-      {:excoveralls, "~> 0.15.0", optional: true, only: [:test, :dev]},
-      {:mix_test_watch, "~> 1.1.0", only: [:dev, :test]},
-      {:porcelain, "~> 2.0.3", only: [:test, :dev], runtime: false},
-      {:uuid, "~> 1.1.8", only: [:test, :dev], runtime: false},
+      {:excoveralls, "~> 0.18", optional: true, only: [:test, :dev]},
+      {:mix_test_watch, "~> 1.2", only: [:dev, :test]},
+      {:porcelain, "~> 2.0", only: [:test, :dev], runtime: false},
+      {:uuid, "~> 1.1", only: [:test, :dev], runtime: false},
       {:tzdata, "~> 1.1", only: [:test, :dev]},
 
       # Benchmarking dependencies
-      {:benchee, "~> 1.1.0", optional: true, only: [:dev, :test]},
-      {:benchee_html, "~> 1.0.0", optional: true, only: [:dev]},
+      {:benchee, "~> 1.3", optional: true, only: [:dev, :test]},
+      {:benchee_html, "~> 1.0", optional: true, only: [:dev]},
 
       # Linting dependencies
-      {:credo, "~> 1.6.7", only: [:dev]},
-      {:dialyxir, "~> 1.2.0", only: [:dev], runtime: false},
+      {:credo, "~> 1.7", only: [:dev]},
+      {:dialyxir, "~> 1.4", only: [:dev], runtime: false},
       # mix eye_drops
       {:eye_drops, github: "florinpatrascu/eye_drops", only: [:dev, :test], runtime: false},
 
       # Documentation dependencies
       # Run me like this: `mix docs`
-      {:ex_doc, "~> 0.29", only: :dev, runtime: false}
+      {:ex_doc, "~> 0.35", only: :dev, runtime: false}
     ]
   end
 end

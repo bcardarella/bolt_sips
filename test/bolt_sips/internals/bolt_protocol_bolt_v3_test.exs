@@ -28,13 +28,36 @@ defmodule Bolt.Sips.Internals.BoltProtocolBoltV3Test do
       )
 
     {:ok, bolt_version} = BoltProtocol.handshake(:gen_tcp, port, [])
-    {:ok, _} = BoltProtocol.hello(:gen_tcp, port, bolt_version, auth)
+
+    # Handle v5.1+ authentication flow (HELLO without auth, then LOGON)
+    case bolt_version do
+      {major, minor} when major >= 5 and minor >= 1 ->
+        {:ok, _} = BoltProtocol.hello(:gen_tcp, port, bolt_version, {})
+        do_logon(:gen_tcp, port, bolt_version, auth)
+
+      _ ->
+        {:ok, _} = BoltProtocol.hello(:gen_tcp, port, bolt_version, auth)
+    end
 
     on_exit(fn ->
       :gen_tcp.close(port)
     end)
 
     {:ok, config: config, port: port, bolt_version: bolt_version}
+  end
+
+  # Helper for v5.1+ LOGON
+  defp do_logon(transport, port, bolt_version, auth) do
+    alias Bolt.Sips.Internals.BoltProtocolHelper
+    alias Bolt.Sips.Internals.Error
+
+    BoltProtocolHelper.send_message(transport, port, bolt_version, {:logon, [auth]})
+
+    case BoltProtocolHelper.receive_data(transport, port, bolt_version, []) do
+      {:success, _info} -> :ok
+      {:failure, response} -> {:error, Error.exception(response, port, :logon)}
+      other -> {:error, Error.exception(other, port, :logon)}
+    end
   end
 
   describe "run/7" do

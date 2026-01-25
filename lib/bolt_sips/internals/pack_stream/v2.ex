@@ -20,11 +20,15 @@ defmodule Bolt.Sips.Internals.PackStream.V2 do
       # Local DateTime
       @local_datetime_signature 0x64
 
-      # Datetime with TZ offset
+      # Datetime with TZ offset (v2-v4)
       @datetime_with_zone_offset_signature 0x46
+      # Datetime with TZ offset (v5+)
+      @datetime_with_zone_offset_signature_v5 0x49
 
-      # Datetime with TZ id
+      # Datetime with TZ id (v2-v4)
       @datetime_with_zone_id_signature 0x66
+      # Datetime with TZ id (v5+)
+      @datetime_with_zone_id_signature_v5 0x69
 
       # Duration
       @duration_signature 0x45
@@ -63,19 +67,38 @@ defmodule Bolt.Sips.Internals.PackStream.V2 do
         )
       end
 
+      # v5+ uses new signature for datetime with timezone id
       defp do_call_encode(:datetime_with_tz_id, datetime, bolt_version)
-           when bolt_version >= 2 and bolt_version <= @last_version do
+           when bolt_version >= 5 and bolt_version <= @last_version do
         data = decompose_datetime(DateTime.to_naive(datetime)) ++ [datetime.time_zone]
+        Encoder.encode({@datetime_with_zone_id_signature_v5, data}, bolt_version)
+      end
 
+      # v2-v4 uses old signature for datetime with timezone id
+      defp do_call_encode(:datetime_with_tz_id, datetime, bolt_version)
+           when bolt_version >= 2 and bolt_version <= 4 do
+        data = decompose_datetime(DateTime.to_naive(datetime)) ++ [datetime.time_zone]
         Encoder.encode({@datetime_with_zone_id_signature, data}, bolt_version)
       end
 
+      # v5+ uses new signature for datetime with timezone offset
       defp do_call_encode(
              :datetime_with_tz_offset,
              %DateTimeWithTZOffset{naive_datetime: ndt, timezone_offset: tz_offset},
              bolt_version
            )
-           when bolt_version >= 2 and bolt_version <= @last_version do
+           when bolt_version >= 5 and bolt_version <= @last_version do
+        data = decompose_datetime(ndt) ++ [tz_offset]
+        Encoder.encode({@datetime_with_zone_offset_signature_v5, data}, bolt_version)
+      end
+
+      # v2-v4 uses old signature for datetime with timezone offset
+      defp do_call_encode(
+             :datetime_with_tz_offset,
+             %DateTimeWithTZOffset{naive_datetime: ndt, timezone_offset: tz_offset},
+             bolt_version
+           )
+           when bolt_version >= 2 and bolt_version <= 4 do
         data = decompose_datetime(ndt) ++ [tz_offset]
         Encoder.encode({@datetime_with_zone_offset_signature, data}, bolt_version)
       end

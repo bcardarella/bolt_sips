@@ -18,12 +18,16 @@ defmodule ErrorsTest do
         props: @simple_map
       })
 
-    assert %{"labels-added" => 1, "nodes-created" => 1, "properties-set" => 2} == stats
+    # Check required stats are present (Neo4j 2025.12+ may include additional keys like "contains-updates")
+    assert stats["labels-added"] == 1
+    assert stats["nodes-created"] == 1
+    assert stats["properties-set"] == 2
     assert "w" == type
   end
 
   test "exception when creating a node using SET properties with a nested map" do
-    err = "Property values can only be of primitive types or arrays thereof"
+    # Neo4j 2025.12+ returns more detailed error messages, so use pattern matching
+    err = ~r/Property values can only be of primitive types or arrays thereof/
 
     assert_raise Bolt.Sips.Exception, err, fn ->
       Bolt.Sips.query!(

@@ -2,6 +2,7 @@ defmodule Bolt.Sips.InternalCase do
   use ExUnit.CaseTemplate
 
   alias Bolt.Sips.Internals.BoltProtocol
+  alias Bolt.Sips.Internals.BoltProtocolHelper
 
   setup do
     uri = neo4j_uri()
@@ -18,7 +19,7 @@ defmodule Bolt.Sips.InternalCase do
   end
 
   defp neo4j_uri do
-    "bolt://neo4j:test@localhost:7687"
+    "bolt://localhost:7687"
     |> URI.merge(System.get_env("NEO4J_TEST_URL") || "")
     |> URI.parse()
     |> Map.update!(:host, &String.to_charlist/1)
@@ -33,11 +34,32 @@ defmodule Bolt.Sips.InternalCase do
     end)
   end
 
-  defp init(transport, port, 3, auth) do
-    BoltProtocol.hello(transport, port, 3, auth)
+  # v5.1+ uses HELLO (without auth) + LOGON (with auth)
+  defp init(transport, port, {major, minor} = bolt_version, auth)
+       when major >= 5 and minor >= 1 do
+    with {:ok, _} <- BoltProtocol.hello(transport, port, bolt_version, {}),
+         :ok <- do_logon(transport, port, bolt_version, auth) do
+      {:ok, %{}}
+    end
   end
 
+  # v4+ and v3 use HELLO with auth
+  defp init(transport, port, bolt_version, auth) when is_tuple(bolt_version) or bolt_version >= 3 do
+    BoltProtocol.hello(transport, port, bolt_version, auth)
+  end
+
+  # v1-v2 use INIT
   defp init(transport, port, bolt_version, auth) do
     BoltProtocol.init(transport, port, bolt_version, auth)
+  end
+
+  defp do_logon(transport, port, bolt_version, auth) do
+    BoltProtocolHelper.send_message(transport, port, bolt_version, {:logon, [auth]})
+
+    case BoltProtocolHelper.receive_data(transport, port, bolt_version, []) do
+      {:success, _} -> :ok
+      {:failure, response} -> {:error, response}
+      other -> {:error, other}
+    end
   end
 end

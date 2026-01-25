@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mix deps.get:*)",
+      "Bash(mix deps.compile:*)",
+      "Bash(mix compile:*)",
+      "Bash(mix test:*)",
+      "Bash(brew services start:*)",
+      "Bash(curl:*)",
+      "Bash(nc:*)",
+      "Bash(cypher-shell:*)",
+      "Bash(neo4j-admin dbms set-initial-password:*)",
+      "WebSearch",
+      "WebFetch(domain:neo4j.com)",
+      "Bash(pkill:*)",
+      "Bash(grep:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nAdd Bolt v4/v5 protocol support for Neo4j 2025.x\n\nKey changes:\n- Add BoltProtocolV4 module with LOGON, LOGOFF, TELEMETRY, ROUTE support\n- Update Metadata struct with v4/v5 fields \\(db, mode, imp_user, notifications\\)\n- Add explicit PULL/DISCARD handlers with n and qid parameters\n- Add HELLO with bolt_agent for v5+\n- Fix timeout protection \\(change from :infinity to 30s default\\)\n- Add v4.3+ guard for ROUTE message\n- Fix neo4j:// scheme detection for routing\n- Update v5 negotiation to prefer 5.6 and skip unused 5.5\n- Add connection hints processing from HELLO response\n- Improve error recovery with comprehensive RESET\n- Add ConnectionHealth module for circuit breaker and retry logic\n- Add comprehensive test coverage for v4 and v5 encoders\nEOF\n\\)\")",
+      "Bash(git push:*)",
+      "Bash(git commit:*)"
+    ]
+  }
+}

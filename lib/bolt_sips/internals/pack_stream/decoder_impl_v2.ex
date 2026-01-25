@@ -74,13 +74,18 @@ defmodule Bolt.Sips.Internals.PackStream.DecoderImplV2 do
       @local_datetime_signature 0x64
       @local_datetime_struct_size 2
 
-      # Datetime with TZ offset
+      # Datetime with TZ offset (v2-v4)
       @datetime_with_zone_offset_signature 0x46
       @datetime_with_zone_offset_struct_size 3
 
-      # Datetime with TZ id
+      # Datetime with TZ id (v2-v4)
       @datetime_with_zone_id_signature 0x66
       @datetime_with_zone_id_struct_size 3
+
+      # Datetime with TZ offset (v5+) - new signature
+      @datetime_with_zone_offset_signature_v5 0x49
+      # Datetime with TZ id (v5+) - new signature
+      @datetime_with_zone_id_signature_v5 0x69
 
       # Duration
       @duration_signature 0x45
@@ -134,7 +139,7 @@ defmodule Bolt.Sips.Internals.PackStream.DecoderImplV2 do
         [t | rest]
       end
 
-      # Datetime with zone Id
+      # Datetime with zone Id (v2-v4)
       def decode(
             {@datetime_with_zone_id_signature, struct, @datetime_with_zone_id_struct_size},
             bolt_version
@@ -154,7 +159,27 @@ defmodule Bolt.Sips.Internals.PackStream.DecoderImplV2 do
         [dt | rest]
       end
 
-      # Datetime with zone offset
+      # Datetime with zone Id (v5+) - new signature 0x69
+      def decode(
+            {@datetime_with_zone_id_signature_v5, struct, @datetime_with_zone_id_struct_size},
+            bolt_version
+          )
+          when bolt_version >= 5 and bolt_version <= @last_version do
+        {[seconds, nanoseconds, zone_id], rest} =
+          decode_struct(struct, @datetime_with_zone_id_struct_size, bolt_version)
+
+        naive_dt =
+          NaiveDateTime.add(
+            ~N[1970-01-01 00:00:00.000000],
+            seconds * 1_000_000_000 + nanoseconds,
+            :nanosecond
+          )
+
+        dt = Bolt.Sips.TypesHelper.datetime_with_micro(naive_dt, zone_id)
+        [dt | rest]
+      end
+
+      # Datetime with zone offset (v2-v4)
       def decode(
             {@datetime_with_zone_offset_signature, struct,
              @datetime_with_zone_offset_struct_size},
@@ -162,7 +187,28 @@ defmodule Bolt.Sips.Internals.PackStream.DecoderImplV2 do
           )
           when bolt_version >= 2 and bolt_version <= @last_version do
         {[seconds, nanoseconds, zone_offset], rest} =
-          decode_struct(struct, @datetime_with_zone_id_struct_size, bolt_version)
+          decode_struct(struct, @datetime_with_zone_offset_struct_size, bolt_version)
+
+        naive_dt =
+          NaiveDateTime.add(
+            ~N[1970-01-01 00:00:00.000000],
+            seconds * 1_000_000_000 + nanoseconds,
+            :nanosecond
+          )
+
+        dt = DateTimeWithTZOffset.create(naive_dt, zone_offset)
+        [dt | rest]
+      end
+
+      # Datetime with zone offset (v5+) - new signature 0x49
+      def decode(
+            {@datetime_with_zone_offset_signature_v5, struct,
+             @datetime_with_zone_offset_struct_size},
+            bolt_version
+          )
+          when bolt_version >= 5 and bolt_version <= @last_version do
+        {[seconds, nanoseconds, zone_offset], rest} =
+          decode_struct(struct, @datetime_with_zone_offset_struct_size, bolt_version)
 
         naive_dt =
           NaiveDateTime.add(

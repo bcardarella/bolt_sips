@@ -69,13 +69,19 @@ defmodule Bolt.Sips.Internals.PackStream.Markers do
       @local_datetime_signature 0x64
       @local_datetime_struct_size 2
 
-      # Datetime with TZ offset
+      # Datetime with TZ offset (v2-v4)
       @datetime_with_zone_offset_signature 0x46
       @datetime_with_zone_offset_struct_size 3
 
-      # Datetime with TZ id
+      # Datetime with TZ id (v2-v4)
       @datetime_with_zone_id_signature 0x66
       @datetime_with_zone_id_struct_size 3
+
+      # Datetime with TZ offset (v5+)
+      @datetime_with_zone_offset_signature_v5 0x49
+
+      # Datetime with TZ id (v5+)
+      @datetime_with_zone_id_signature_v5 0x69
 
       # Duration
       @duration_signature 0x45
@@ -108,6 +114,9 @@ defmodule Bolt.Sips.Internals.PackStream.MarkersHelper do
       @local_datetime_signature,
       @datetime_with_zone_offset_signature,
       @datetime_with_zone_id_signature,
+      # v5+ datetime signatures
+      @datetime_with_zone_offset_signature_v5,
+      @datetime_with_zone_id_signature_v5,
       @duration_signature,
       @point2d_signature,
       @point3d_signature
