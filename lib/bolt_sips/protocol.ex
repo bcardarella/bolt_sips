@@ -358,7 +358,28 @@ defmodule Bolt.Sips.Protocol do
       {:error, %{code: :failure, message: msg}, conn_data}
   end
 
-  defp _to_hostname(hostname) when is_binary(hostname), do: String.to_charlist(hostname)
-  defp _to_hostname(hostname) when is_list(hostname), do: hostname
+  # Convert hostname to the correct format for :gen_tcp.connect
+  # IP addresses must be tuples (e.g., {127, 0, 0, 1}), not charlists
+  # Hostnames should be charlists for DNS resolution
+  #
+  # In OTP 27+, passing an IP address as a charlist may trigger DNS lookup
+  # which fails with :nxdomain. This function ensures IP addresses are
+  # passed as tuples to avoid DNS lookup.
+  defp _to_hostname(hostname) when is_binary(hostname) do
+    charlist = String.to_charlist(hostname)
+    case :inet.parse_address(charlist) do
+      {:ok, ip_tuple} -> ip_tuple  # IP address - use tuple
+      {:error, _} -> charlist       # Hostname - use charlist for DNS
+    end
+  end
+
+  defp _to_hostname(hostname) when is_list(hostname) do
+    case :inet.parse_address(hostname) do
+      {:ok, ip_tuple} -> ip_tuple  # IP address - use tuple
+      {:error, _} -> hostname       # Hostname - keep as charlist
+    end
+  end
+
+  defp _to_hostname(hostname) when is_tuple(hostname), do: hostname  # Already a tuple
   defp _to_hostname(hostname), do: hostname
 end
