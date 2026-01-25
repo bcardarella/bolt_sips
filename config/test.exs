@@ -3,6 +3,10 @@ import Config
 config :bolt_sips, Bolt,
   # default port considered to be: 7687
   url: "bolt://localhost",
+  basic_auth: [
+    username: System.get_env("NEO4J_USER") || "neo4j",
+    password: System.get_env("NEO4J_PASSWORD") || "testpassword"
+  ],
   pool_size: 10,
   max_overflow: 2,
   queue_interval: 500,

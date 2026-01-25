@@ -18,6 +18,13 @@ defmodule Bolt.Sips.Internals.BoltProtocolV4 do
 
   In v4+, HELLO can include routing context for cluster routing.
 
+  IMPORTANT: Authentication flow differs by version:
+  - v4.x and v5.0: HELLO includes auth credentials
+  - v5.1+: HELLO does NOT include auth, caller must use LOGON separately
+
+  For v5.1+, this function sends HELLO without auth. The caller is responsible
+  for calling `logon/5` afterwards to complete authentication.
+
   ## Options
 
   See "Shared options" in `Bolt.Sips.Internals.BoltProtocolHelper` documentation.
@@ -33,6 +40,9 @@ defmodule Bolt.Sips.Internals.BoltProtocolV4 do
   @spec hello(atom(), port(), integer() | {integer(), integer()}, tuple(), Keyword.t()) ::
           {:ok, any()} | {:error, Bolt.Sips.Internals.Error.t()}
   def hello(transport, port, bolt_version, auth, options \\ [recv_timeout: 15_000]) do
+    # The encoder handles the version-specific encoding:
+    # - v4.x/v5.0: includes auth in HELLO
+    # - v5.1+: excludes auth from HELLO (auth param is ignored by encoder)
     BoltProtocolHelper.send_message(transport, port, bolt_version, {:hello, [auth]})
 
     case BoltProtocolHelper.receive_data(transport, port, bolt_version, options) do

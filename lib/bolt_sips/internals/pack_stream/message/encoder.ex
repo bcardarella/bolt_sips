@@ -220,7 +220,33 @@ defmodule Bolt.Sips.Internals.PackStream.Message.Encoder do
           | {:error, :not_implemented}
           | {:error, :invalid_message}
 
-  # Handle tuple versions by extracting major version (must be first clause)
+  # IMPORTANT: Version-specific tuple clauses MUST come before the generic tuple-to-integer conversion
+  # v5.1+ HELLO - NO auth fields (scheme, principal, credentials)
+  # Per Bolt spec, v5.1+ separates authentication into LOGON message
+  def encode({:hello, [_auth]}, {major, minor} = version)
+      when major >= 5 and minor >= 1 do
+    do_encode(:hello, [hello_params_v5()], version)
+  end
+
+  def encode({:hello, []}, {major, minor} = version)
+      when major >= 5 and minor >= 1 do
+    do_encode(:hello, [hello_params_v5()], version)
+  end
+
+  def encode({:hello, [_auth, extra]}, {major, minor} = version)
+      when major >= 5 and minor >= 1 and is_map(extra) do
+    params = hello_params_v5() |> Map.merge(extra)
+    do_encode(:hello, [params], version)
+  end
+
+  # v5.1+ LOGON - sends authentication credentials
+  def encode({:logon, [auth]}, {major, minor} = version)
+      when major >= 5 and minor >= 1 do
+    do_encode(:logon, [logon_auth_params(auth)], version)
+  end
+
+  # Generic tuple-to-integer conversion for versions that don't need minor version
+  # This handles v4.x, v5.0, and messages that don't have version-specific behavior
   def encode(data, bolt_version) when is_tuple(bolt_version) do
     encode(data, extract_major_version(bolt_version))
   end
@@ -614,10 +640,11 @@ defmodule Bolt.Sips.Internals.PackStream.Message.Encoder do
   """
 
   # Encode messages for bolt version 5+
+  # NOTE: v5.1+ specific clauses (HELLO without auth, LOGON) are at the top of this file
+  # to ensure they match before the generic tuple-to-integer conversion
 
-  # HELLO for v5+ (same as v4 but with bolt_agent and notification support)
-  # v5.2+ supports: notifications_minimum_severity
-  # v5.6+ supports: notifications_disabled_classifications
+  # HELLO for v5.0 - includes auth (same as v4)
+  # This catches integer version 5 (after tuple conversion for v5.0)
   def encode({:hello, []}, bolt_version) when bolt_version >= 5 do
     encode({:hello, [{}]}, bolt_version)
   end
@@ -626,25 +653,14 @@ defmodule Bolt.Sips.Internals.PackStream.Message.Encoder do
     do_encode(:hello, [auth_params_v4(auth)], bolt_version)
   end
 
-  # HELLO with notification configuration for v5+
-  # Extra map can include: notifications_minimum_severity, notifications_disabled_classifications
   def encode({:hello, [auth, extra]}, bolt_version) when bolt_version >= 5 and is_map(extra) do
     params = auth_params_v4(auth) |> Map.merge(extra)
     do_encode(:hello, [params], bolt_version)
   end
 
-  # LOGON for v5.1+ - separate authentication from HELLO
+  # LOGON for v5+ (integer version after tuple conversion)
   def encode({:logon, [auth]}, bolt_version) when bolt_version >= 5 do
-    auth_map = case auth do
-      {} -> %{}
-      {username, password} ->
-        %{
-          scheme: "basic",
-          principal: username,
-          credentials: password
-        }
-    end
-    do_encode(:logon, [auth_map], bolt_version)
+    do_encode(:logon, [logon_auth_params(auth)], bolt_version)
   end
 
   # LOGOFF for v5.1+
@@ -653,8 +669,9 @@ defmodule Bolt.Sips.Internals.PackStream.Message.Encoder do
   end
 
   # TELEMETRY for v5.4+ - sends driver API usage info
-  def encode({:telemetry, [api]}, bolt_version) when bolt_version >= 5 do
-    do_encode(:telemetry, [%{api: api}], bolt_version)
+  # api is an integer representing the driver API (e.g., 0=managed tx, 1=explicit tx, etc.)
+  def encode({:telemetry, [api]}, bolt_version) when bolt_version >= 5 and is_integer(api) do
+    do_encode(:telemetry, [api], bolt_version)
   end
 
   # Encode messages for bolt version 4+
@@ -833,8 +850,11 @@ defmodule Bolt.Sips.Internals.PackStream.Message.Encoder do
   end
 
   # Format the auth params for v4+ (includes routing support)
-  @spec auth_params_v4({} | {String.t(), String.t()}) :: map()
+  # Used for v4.x and v5.0 where auth is included in HELLO
+  @spec auth_params_v4({} | {String.t(), String.t()} | {nil, nil}) :: map()
   defp auth_params_v4({}), do: user_agent_v4()
+  defp auth_params_v4({nil, _}), do: user_agent_v4()
+  defp auth_params_v4({_, nil}), do: user_agent_v4()
 
   defp auth_params_v4({username, password}) do
     %{
@@ -843,6 +863,33 @@ defmodule Bolt.Sips.Internals.PackStream.Message.Encoder do
       credentials: password
     }
     |> Map.merge(user_agent_v4())
+  end
+
+  # HELLO params for v5.1+ - NO auth fields
+  # Per Bolt spec, v5.1+ separates authentication into LOGON message
+  defp hello_params_v5() do
+    %{
+      user_agent: client_name(),
+      bolt_agent: %{
+        "product" => "BoltSips/" <> to_string(Application.spec(:bolt_sips, :vsn)),
+        "platform" => platform_info(),
+        "language" => "Elixir/" <> System.version()
+      }
+    }
+  end
+
+  # Auth params for LOGON message (v5.1+)
+  @spec logon_auth_params({} | {String.t(), String.t()} | {nil, nil}) :: map()
+  defp logon_auth_params({}), do: %{scheme: "none"}
+  defp logon_auth_params({nil, _}), do: %{scheme: "none"}
+  defp logon_auth_params({_, nil}), do: %{scheme: "none"}
+
+  defp logon_auth_params({username, password}) do
+    %{
+      scheme: "basic",
+      principal: username,
+      credentials: password
+    }
   end
 
   defp user_agent() do
