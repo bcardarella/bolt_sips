@@ -201,6 +201,57 @@ defmodule Bolt.Sips.Protocol do
     :ok
   end
 
+  # Catch-all handler for unexpected state formats
+  # This can happen when:
+  # - Connection was never fully established
+  # - DBConnection passes options instead of state during certain error scenarios
+  # - State was corrupted during a connection error
+  def disconnect(reason, state) do
+    state_type =
+      cond do
+        is_nil(state) -> :nil
+        is_map(state) and Map.has_key?(state, :__struct__) -> state.__struct__
+        is_map(state) -> :map
+        is_list(state) -> :keyword_list
+        true -> :unknown
+      end
+
+    Logger.warning(
+      "[Bolt.Sips.Protocol] disconnect called with unexpected state format. " <>
+        "Reason: #{inspect(reason)}, State type: #{inspect(state_type)}"
+    )
+
+    # Attempt to extract and close socket if present
+    try do
+      socket_module = extract_socket_module(state)
+      sock = extract_sock(state)
+
+      if socket_module && sock do
+        socket_module.close(sock)
+      end
+    rescue
+      _ -> :ok
+    end
+
+    :ok
+  end
+
+  # Helper to extract socket module from various state formats
+  defp extract_socket_module(%{configuration: conf}) when is_list(conf),
+    do: Keyword.get(conf, :socket)
+
+  defp extract_socket_module(%{configuration: conf}) when is_map(conf),
+    do: Map.get(conf, :socket)
+
+  defp extract_socket_module(%{socket: socket}), do: socket
+  defp extract_socket_module(state) when is_list(state), do: Keyword.get(state, :socket)
+  defp extract_socket_module(state) when is_map(state), do: Map.get(state, :socket)
+  defp extract_socket_module(_), do: nil
+
+  # Helper to extract socket from various state formats
+  defp extract_sock(%{sock: sock}), do: sock
+  defp extract_sock(_), do: nil
+
   @doc "Callback for DBConnection.handle_begin/1"
   # v4+ and v3 use BEGIN message
   def handle_begin(_, %ConnData{sock: sock, bolt_version: bolt_version, configuration: conf} = conn_data)
