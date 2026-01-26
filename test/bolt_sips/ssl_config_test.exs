@@ -2,7 +2,6 @@ defmodule Bolt.Sips.SSLConfigTest do
   use ExUnit.Case, async: true
 
   alias Bolt.Sips.Utils
-  alias Bolt.Sips.Protocol
 
   describe "ssl: false configuration" do
     test "default_config sets socket to Bolt.Sips.Socket when ssl: false" do

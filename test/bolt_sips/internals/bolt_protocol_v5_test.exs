@@ -6,9 +6,6 @@ defmodule Bolt.Sips.Internals.BoltProtocolV5Test do
   alias Bolt.Sips.Internals.BoltProtocolV4
   alias Bolt.Sips.Metadata
 
-  # Use {5, 6} as the default v5 version for tests
-  @bolt_version {5, 6}
-
   # Helper to skip tests conditionally
   defp do_skip(reason) do
     IO.puts("Skipping: #{reason}")

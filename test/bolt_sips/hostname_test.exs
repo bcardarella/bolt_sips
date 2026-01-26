@@ -1,8 +1,6 @@
 defmodule Bolt.Sips.HostnameTest do
   use ExUnit.Case, async: true
 
-  alias Bolt.Sips.Protocol
-
   describe "hostname handling for :gen_tcp.connect" do
     test "IPv4 address string should be converted to tuple for gen_tcp" do
       # :gen_tcp.connect expects IP addresses as tuples, not charlists

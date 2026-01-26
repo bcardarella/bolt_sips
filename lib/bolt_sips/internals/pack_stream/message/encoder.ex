@@ -139,24 +139,7 @@ defmodule Bolt.Sips.Internals.PackStream.Message.Encoder do
     :run
   ]
 
-  @valid_v5_message_types [
-    :begin,
-    :commit,
-    :discard,
-    :goodbye,
-    :hello,
-    :logoff,
-    :logon,
-    :pull,
-    :reset,
-    :rollback,
-    :route,
-    :run,
-    :telemetry
-  ]
-
-  # For backward compatibility
-  @valid_signatures @valid_v3_signatures
+  # For backward compatibility with code that references @valid_message_types
   @valid_message_types @valid_v3_message_types
 
   @last_bolt_version 5

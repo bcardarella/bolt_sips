@@ -83,7 +83,7 @@ defmodule Bolt.Sips.BoltKitCase do
       with true <- File.exists?(script) do
         sport = Integer.to_string(port)
         porcelain = Porcelain.spawn("boltstub", [sport, script], opts)
-        wait_for_socket('127.0.0.1', port)
+        wait_for_socket(~c"127.0.0.1", port)
         {:ok, porcelain}
       else
         _ -> {:error, script <> ", not found."}

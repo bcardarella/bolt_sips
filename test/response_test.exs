@@ -96,7 +96,7 @@ defmodule ResponseTest do
         "args" => %{
           "DbHits" => 0,
           "EstimatedRows" => 1.0,
-          "PageCacheHitRatio" => 0.0,
+          "PageCacheHitRatio" => +0.0,
           "PageCacheHits" => 0,
           "PageCacheMisses" => 0,
           "Rows" => 0,
@@ -113,7 +113,7 @@ defmodule ResponseTest do
             "args" => %{
               "DbHits" => 0,
               "EstimatedRows" => 1.0,
-              "PageCacheHitRatio" => 0.0,
+              "PageCacheHitRatio" => +0.0,
               "PageCacheHits" => 0,
               "PageCacheMisses" => 0,
               "Rows" => 0
@@ -123,7 +123,7 @@ defmodule ResponseTest do
                 "args" => %{
                   "DbHits" => 3,
                   "EstimatedRows" => 1.0,
-                  "PageCacheHitRatio" => 0.0,
+                  "PageCacheHitRatio" => +0.0,
                   "PageCacheHits" => 0,
                   "PageCacheMisses" => 0,
                   "Rows" => 1
@@ -132,7 +132,7 @@ defmodule ResponseTest do
                 "dbHits" => 3,
                 "identifiers" => ["n"],
                 "operatorType" => "Create",
-                "pageCacheHitRatio" => 0.0,
+                "pageCacheHitRatio" => +0.0,
                 "pageCacheHits" => 0,
                 "pageCacheMisses" => 0,
                 "rows" => 1
@@ -141,7 +141,7 @@ defmodule ResponseTest do
             "dbHits" => 0,
             "identifiers" => ["n"],
             "operatorType" => "EmptyResult",
-            "pageCacheHitRatio" => 0.0,
+            "pageCacheHitRatio" => +0.0,
             "pageCacheHits" => 0,
             "pageCacheMisses" => 0,
             "rows" => 0
@@ -150,7 +150,7 @@ defmodule ResponseTest do
         "dbHits" => 0,
         "identifiers" => ["n"],
         "operatorType" => "ProduceResults",
-        "pageCacheHitRatio" => 0.0,
+        "pageCacheHitRatio" => +0.0,
         "pageCacheHits" => 0,
         "pageCacheMisses" => 0,
         "rows" => 0
@@ -174,7 +174,7 @@ defmodule ResponseTest do
         "args" => %{
           "DbHits" => 0,
           "EstimatedRows" => 1.0,
-          "PageCacheHitRatio" => 0.0,
+          "PageCacheHitRatio" => +0.0,
           "PageCacheHits" => 0,
           "PageCacheMisses" => 0,
           "Rows" => 1,
@@ -193,7 +193,7 @@ defmodule ResponseTest do
               "DbHits" => 0,
               "EstimatedRows" => 1.0,
               "Expressions" => "{num : $`  AUTOINT0`}",
-              "PageCacheHitRatio" => 0.0,
+              "PageCacheHitRatio" => +0.0,
               "PageCacheHits" => 0,
               "PageCacheMisses" => 0,
               "Rows" => 1,
@@ -203,7 +203,7 @@ defmodule ResponseTest do
             "dbHits" => 0,
             "identifiers" => ["num"],
             "operatorType" => "Projection",
-            "pageCacheHitRatio" => 0.0,
+            "pageCacheHitRatio" => +0.0,
             "pageCacheHits" => 0,
             "pageCacheMisses" => 0,
             "rows" => 1
@@ -212,7 +212,7 @@ defmodule ResponseTest do
         "dbHits" => 0,
         "identifiers" => ["num"],
         "operatorType" => "ProduceResults",
-        "pageCacheHitRatio" => 0.0,
+        "pageCacheHitRatio" => +0.0,
         "pageCacheHits" => 0,
         "pageCacheMisses" => 0,
         "rows" => 1
@@ -235,7 +235,7 @@ defmodule ResponseTest do
     end
 
     @unwind %Bolt.Sips.Response{
-      records: [[1], [2], [3], [4], [5], [6], '\a', '\b', '\t', '\n'],
+      records: [[1], [2], [3], [4], [5], [6], ~c"\a", ~c"\b", ~c"\t", ~c"\n"],
       results: [
         %{"n" => 1},
         %{"n" => 2},
@@ -317,7 +317,7 @@ defmodule ResponseTest do
                "args" => %{
                  "DbHits" => 0,
                  "EstimatedRows" => 1.0,
-                 "PageCacheHitRatio" => 0.0,
+                 "PageCacheHitRatio" => +0.0,
                  "PageCacheHits" => 0,
                  "PageCacheMisses" => 0,
                  "Rows" => 0,
@@ -334,7 +334,7 @@ defmodule ResponseTest do
                    "args" => %{
                      "DbHits" => 0,
                      "EstimatedRows" => 1.0,
-                     "PageCacheHitRatio" => 0.0,
+                     "PageCacheHitRatio" => +0.0,
                      "PageCacheHits" => 0,
                      "PageCacheMisses" => 0,
                      "Rows" => 0
@@ -344,7 +344,7 @@ defmodule ResponseTest do
                        "args" => %{
                          "DbHits" => 3,
                          "EstimatedRows" => 1.0,
-                         "PageCacheHitRatio" => 0.0,
+                         "PageCacheHitRatio" => +0.0,
                          "PageCacheHits" => 0,
                          "PageCacheMisses" => 0,
                          "Rows" => 1
@@ -353,7 +353,7 @@ defmodule ResponseTest do
                        "dbHits" => 3,
                        "identifiers" => ["n"],
                        "operatorType" => "Create",
-                       "pageCacheHitRatio" => 0.0,
+                       "pageCacheHitRatio" => +0.0,
                        "pageCacheHits" => 0,
                        "pageCacheMisses" => 0,
                        "rows" => 1
@@ -362,7 +362,7 @@ defmodule ResponseTest do
                    "dbHits" => 0,
                    "identifiers" => ["n"],
                    "operatorType" => "EmptyResult",
-                   "pageCacheHitRatio" => 0.0,
+                   "pageCacheHitRatio" => +0.0,
                    "pageCacheHits" => 0,
                    "pageCacheMisses" => 0,
                    "rows" => 0
@@ -371,7 +371,7 @@ defmodule ResponseTest do
                "dbHits" => 0,
                "identifiers" => ["n"],
                "operatorType" => "ProduceResults",
-               "pageCacheHitRatio" => 0.0,
+               "pageCacheHitRatio" => +0.0,
                "pageCacheHits" => 0,
                "pageCacheMisses" => 0,
                "rows" => 0
@@ -392,7 +392,7 @@ defmodule ResponseTest do
                "args" => %{
                  "DbHits" => 0,
                  "EstimatedRows" => 1.0,
-                 "PageCacheHitRatio" => 0.0,
+                 "PageCacheHitRatio" => +0.0,
                  "PageCacheHits" => 0,
                  "PageCacheMisses" => 0,
                  "Rows" => 1,
@@ -411,7 +411,7 @@ defmodule ResponseTest do
                      "DbHits" => 0,
                      "EstimatedRows" => 1.0,
                      "Expressions" => "{num : $`  AUTOINT0`}",
-                     "PageCacheHitRatio" => 0.0,
+                     "PageCacheHitRatio" => +0.0,
                      "PageCacheHits" => 0,
                      "PageCacheMisses" => 0,
                      "Rows" => 1,
@@ -421,7 +421,7 @@ defmodule ResponseTest do
                    "dbHits" => 0,
                    "identifiers" => ["num"],
                    "operatorType" => "Projection",
-                   "pageCacheHitRatio" => 0.0,
+                   "pageCacheHitRatio" => +0.0,
                    "pageCacheHits" => 0,
                    "pageCacheMisses" => 0,
                    "rows" => 1
@@ -430,7 +430,7 @@ defmodule ResponseTest do
                "dbHits" => 0,
                "identifiers" => ["num"],
                "operatorType" => "ProduceResults",
-               "pageCacheHitRatio" => 0.0,
+               "pageCacheHitRatio" => +0.0,
                "pageCacheHits" => 0,
                "pageCacheMisses" => 0,
                "rows" => 1
