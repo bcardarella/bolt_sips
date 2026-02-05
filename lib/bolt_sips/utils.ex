@@ -11,6 +11,8 @@ defmodule Bolt.Sips.Utils do
     pool_size: 15,
     max_overflow: 0,
     timeout: 15_000,
+    idle_interval: 1_000,
+    ping_timeout: 5_000,
     ssl: false,
     socket: Bolt.Sips.Socket,
     with_etls: false,

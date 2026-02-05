@@ -372,7 +372,27 @@ defmodule Bolt.Sips.Protocol do
 
   ### Calming the warnings
   # Callbacks for ...
-  def ping(state), do: {:ok, state}
+
+  @doc "Callback for DBConnection.ping/1"
+  def ping(%ConnData{sock: nil} = state) do
+    {:disconnect, :stale_connection, state}
+  end
+
+  def ping(%ConnData{sock: sock, bolt_version: bolt_version, configuration: conf} = state) do
+    socket = conf[:socket]
+    ping_timeout = Keyword.get(conf, :ping_timeout, 5_000)
+
+    try do
+      case BoltProtocol.reset(socket, sock, bolt_version, recv_timeout: ping_timeout) do
+        :ok -> {:ok, state}
+        _ -> {:disconnect, :stale_connection, state}
+      end
+    rescue
+      _ -> {:disconnect, :stale_connection, state}
+    catch
+      _, _ -> {:disconnect, :stale_connection, state}
+    end
+  end
   def handle_prepare(query, _opts, state), do: {:ok, query, state}
   def handle_close(query, _opts, state), do: {:ok, query, state}
   def handle_deallocate(query, _cursor, _opts, state), do: {:ok, query, state}
