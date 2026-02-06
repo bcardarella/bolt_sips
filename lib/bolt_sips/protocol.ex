@@ -362,8 +362,29 @@ defmodule Bolt.Sips.Protocol do
     execute(query, params, opts, conn_data)
   end
 
+  # Handle server-initiated connection close while idle in pool.
+  # With active: :once set during checkin, we receive these messages
+  # when Neo4j closes the connection (idle timeout, restart, etc.).
+  # Returning {:disconnect, ...} tells DBConnection to remove this
+  # connection and replace it with a fresh one immediately.
+  def handle_info({:tcp_closed, _sock}, state) do
+    {:disconnect, :tcp_closed, state}
+  end
+
+  def handle_info({:tcp_error, _sock, reason}, state) do
+    {:disconnect, {:tcp_error, reason}, state}
+  end
+
+  def handle_info({:ssl_closed, _sock}, state) do
+    {:disconnect, :ssl_closed, state}
+  end
+
+  def handle_info({:ssl_error, _sock, reason}, state) do
+    {:disconnect, {:ssl_error, reason}, state}
+  end
+
   def handle_info(msg, state) do
-    Logger.error(fn ->
+    Logger.warning(fn ->
       [inspect(__MODULE__), ?\s, inspect(self()), " received unexpected message: " | inspect(msg)]
     end)
 
