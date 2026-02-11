@@ -141,89 +141,35 @@ defmodule Bolt.Sips.Sandbox do
   """
   @spec start_owner!(DBConnection.conn(), keyword()) :: pid()
   def start_owner!(conn, opts \\ []) do
-    caller = self()
+    parent = self()
     shared = Keyword.get(opts, :shared, false)
-    timeout = Keyword.get(opts, :ownership_timeout, 120_000)
 
     checkout_opts = [
       post_checkout: &post_checkout/2,
       pre_checkin: &pre_checkin/3
     ]
 
-    {:ok, owner} =
-      Task.start(fn ->
-        case DBConnection.Ownership.ownership_checkout(conn, checkout_opts) do
-          :ok -> :ok
-          {:already, :owner} -> :ok
-          {:already, :allowed} -> :ok
-          other ->
-            send(caller, {__MODULE__, self(), {:error, inspect(other)}})
-            exit(:checkout_failed)
-        end
-
-        # Allow the caller to use our connection
-        DBConnection.Ownership.ownership_allow(conn, self(), caller, [])
-
-        # Set shared mode if requested
-        if shared do
-          DBConnection.Ownership.ownership_mode(conn, {:shared, self()}, [])
-        end
-
-        # Signal that setup is complete
-        send(caller, {__MODULE__, self(), :ok})
-
-        # Wait for caller to exit or stop signal
-        ref = Process.monitor(caller)
-
-        receive do
-          {:DOWN, ^ref, _, _, _} -> :ok
-          {__MODULE__, :stop} -> :ok
-        end
-
-        # Reset pool mode to manual before checkin if shared mode was set.
-        # Without this, the pool remains in {:shared, dead_pid} mode after
-        # the owner exits, causing subsequent tests to fail.
-        if shared do
-          DBConnection.Ownership.ownership_mode(conn, :manual, [])
-        end
-
-        # Explicitly checkin before exiting — this runs ROLLBACK
-        # synchronously so the connection is fully released before
-        # this process exits and the caller can proceed.
-        DBConnection.Ownership.ownership_checkin(conn, [])
-      end)
-
-    receive do
-      {__MODULE__, ^owner, :ok} ->
-        owner
-
-      {__MODULE__, ^owner, {:error, reason}} ->
-        raise "Failed to checkout Neo4j sandbox connection: #{reason}"
-    after
-      timeout ->
-        Process.exit(owner, :kill)
-        raise "Timed out waiting for Neo4j sandbox connection checkout"
-    end
+    # GenServer.start runs init synchronously — checkout + BEGIN complete
+    # before returning. stop_owner/1 uses GenServer.stop which triggers
+    # terminate/2 for synchronous checkin (ROLLBACK) before the process exits.
+    {:ok, pid} = GenServer.start(__MODULE__.Owner, {conn, parent, shared, checkout_opts})
+    pid
   end
 
   @doc """
   Stops the owner process, rolling back the transaction and returning
   the connection to the pool.
 
-  Can be called from any process. When the owner process exits,
-  `DBConnection.Ownership` triggers the `pre_checkin` callback which
-  sends a ROLLBACK to Neo4j.
+  This is a synchronous call — it blocks until the owner process has
+  fully terminated. The owner's `terminate/2` callback runs
+  `ownership_checkin` which triggers the `pre_checkin` callback,
+  sending ROLLBACK to Neo4j before the process exits.
   """
   @spec stop_owner(pid()) :: :ok
   def stop_owner(pid) when is_pid(pid) do
-    ref = Process.monitor(pid)
-    send(pid, {__MODULE__, :stop})
-
-    receive do
-      {:DOWN, ^ref, _, _, _} -> :ok
-    after
-      5_000 -> :ok
-    end
+    GenServer.stop(pid)
+  catch
+    :exit, _ -> :ok
   end
 
   @doc """
@@ -234,6 +180,38 @@ defmodule Bolt.Sips.Sandbox do
   @spec allow(DBConnection.conn(), pid(), pid()) :: :ok | {:already, :owner | :allowed} | :not_found
   def allow(conn, owner_pid, child_pid) do
     DBConnection.Ownership.ownership_allow(conn, owner_pid, child_pid, [])
+  end
+
+  # A minimal GenServer that holds the ownership checkout.
+  # init/1 runs synchronously (checkout + BEGIN + allow/share complete before start returns).
+  # terminate/2 runs synchronously on stop (checkin + ROLLBACK complete before stop returns).
+  defmodule Owner do
+    @moduledoc false
+    use GenServer
+
+    @impl true
+    def init({conn, parent, shared, checkout_opts}) do
+      case DBConnection.Ownership.ownership_checkout(conn, checkout_opts) do
+        :ok -> :ok
+        {:already, :owner} -> :ok
+        {:already, :allowed} -> :ok
+      end
+
+      if shared do
+        DBConnection.Ownership.ownership_mode(conn, {:shared, self()}, [])
+      else
+        DBConnection.Ownership.ownership_allow(conn, self(), parent, [])
+      end
+
+      {:ok, conn}
+    end
+
+    @impl true
+    def terminate(_reason, conn) do
+      DBConnection.Ownership.ownership_checkin(conn, [])
+    catch
+      :exit, _ -> :ok
+    end
   end
 
   # Called after a connection is checked out from the ownership pool.
@@ -252,34 +230,27 @@ defmodule Bolt.Sips.Sandbox do
   end
 
   # Called before a connection is checked back in to the ownership pool.
-  # Sends ROLLBACK to undo all changes made during the test.
-  defp pre_checkin(_reason, conn_module, conn_state) do
+  # On normal checkin: sends ROLLBACK to undo all changes made during the test.
+  # On disconnect/stop: skips ROLLBACK since the connection is being destroyed.
+  # This matches Ecto.Adapters.SQL.Sandbox's behavior.
+  defp pre_checkin(:checkin, conn_module, conn_state) do
     case conn_module.handle_rollback([], conn_state) do
       {:ok, _result, new_state} ->
         {:ok, conn_module, new_state}
 
       {:error, _err, new_state} ->
-        # Even if rollback fails, return the connection.
-        # Attempt a RESET to recover the connection state.
-        try_reset(conn_module, new_state)
+        # ROLLBACK failed — connection state is unreliable.
+        # Disconnect so the pool creates a fresh connection.
+        {:disconnect, :rollback_failed, conn_module, new_state}
 
       {:disconnect, _err, new_state} ->
         {:disconnect, :rollback_failed, conn_module, new_state}
     end
   end
 
-  # Attempt to reset the connection after a failed rollback.
-  defp try_reset(conn_module, conn_state) do
-    %{sock: sock, bolt_version: bolt_version, configuration: conf} = conn_state
-    socket = conf[:socket]
-
-    try do
-      Bolt.Sips.Internals.BoltProtocol.reset(socket, sock, bolt_version)
-      {:ok, conn_module, conn_state}
-    rescue
-      _ -> {:disconnect, :reset_failed, conn_module, conn_state}
-    catch
-      _, _ -> {:disconnect, :reset_failed, conn_module, conn_state}
-    end
+  defp pre_checkin(_reason, conn_module, conn_state) do
+    # Connection is being disconnected or stopped — don't attempt
+    # ROLLBACK on a broken connection. The pool will replace it.
+    {:ok, conn_module, conn_state}
   end
 end

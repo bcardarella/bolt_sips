@@ -74,12 +74,12 @@ defmodule Bolt.Sips.SandboxStressTest do
   end
 
   describe "spawned process lifecycle at scale" do
-    test "#{@scale} spawned processes checkout, query, exit (auto-cleanup)" do
+    test "#{@scale} spawned processes checkout, query, stop_owner" do
       conn = Bolt.Sips.conn(:direct, prefix: @sandbox_prefix)
       Bolt.Sips.Sandbox.mode(conn, :manual)
 
       for i <- 1..@scale do
-        task =
+        owner =
           Task.async(fn ->
             owner = Bolt.Sips.Sandbox.start_owner!(conn)
 
@@ -87,13 +87,12 @@ defmodule Bolt.Sips.SandboxStressTest do
               Bolt.Sips.query(conn, "RETURN $i AS n", %{i: i})
 
             assert result["n"] == i
-            # No stop_owner — process exit triggers auto-cleanup
-            # (owner monitors this process and exits when it does)
-            _ = owner
+            owner
           end)
+          |> Task.await(5_000)
 
-        Task.await(task, 5_000)
-        Process.sleep(1)
+        # Explicit stop — matches ExUnit on_exit pattern
+        Bolt.Sips.Sandbox.stop_owner(owner)
       end
 
       # Pool still healthy

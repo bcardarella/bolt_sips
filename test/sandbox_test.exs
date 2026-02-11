@@ -233,24 +233,25 @@ defmodule Bolt.Sips.SandboxTest do
   end
 
   describe "owner process lifecycle" do
-    test "owner exits when caller exits", %{owner: owner} do
+    test "owner stays alive until stop_owner is called", %{owner: owner} do
       conn = Bolt.Sips.conn(:direct, prefix: @sandbox_prefix)
 
       # Stop the setup owner
       Bolt.Sips.Sandbox.stop_owner(owner)
 
-      # Spawn a process that starts an owner, then exits
-      {_caller_pid, caller_ref} =
-        spawn_monitor(fn ->
-          _inner_owner = Bolt.Sips.Sandbox.start_owner!(conn)
-          # Process exits here — owner should auto-cleanup
+      # Spawn a process that starts an owner, returns it, then exits
+      inner_owner =
+        Task.async(fn ->
+          Bolt.Sips.Sandbox.start_owner!(conn)
         end)
+        |> Task.await(5_000)
 
-      # Wait for the caller to exit
-      assert_receive {:DOWN, ^caller_ref, _, _, _}, 5_000
+      # The caller (Task) has exited, but the Agent owner is still alive
+      assert Process.alive?(inner_owner)
 
-      # Give DBConnection a moment to process the exit
-      Process.sleep(50)
+      # Explicitly stop — this triggers ROLLBACK and pool cleanup
+      Bolt.Sips.Sandbox.stop_owner(inner_owner)
+      refute Process.alive?(inner_owner)
 
       # Pool should be healthy — start a new owner
       new_owner = Bolt.Sips.Sandbox.start_owner!(conn)
