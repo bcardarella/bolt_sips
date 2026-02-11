@@ -34,14 +34,14 @@ defmodule Bolt.Sips.SandboxStressTest do
       Bolt.Sips.Sandbox.mode(conn, :manual)
 
       for i <- 1..@scale do
-        Bolt.Sips.Sandbox.start_owner!(conn)
+        owner = Bolt.Sips.Sandbox.start_owner!(conn)
 
         {:ok, %Response{results: [result]}} =
           Bolt.Sips.query(conn, "RETURN $i AS n", %{i: i})
 
         assert result["n"] == i
 
-        Bolt.Sips.Sandbox.stop_owner(conn)
+        Bolt.Sips.Sandbox.stop_owner(owner)
       end
     end
 
@@ -50,7 +50,7 @@ defmodule Bolt.Sips.SandboxStressTest do
       Bolt.Sips.Sandbox.mode(conn, :manual)
 
       for i <- 1..@scale do
-        Bolt.Sips.Sandbox.start_owner!(conn)
+        owner = Bolt.Sips.Sandbox.start_owner!(conn)
 
         Bolt.Sips.query!(conn, "CREATE (n:StressTest {seq: $i}) RETURN n", %{i: i})
 
@@ -59,17 +59,17 @@ defmodule Bolt.Sips.SandboxStressTest do
 
         assert result["cnt"] == 1, "Iteration #{i}: expected 1, got #{result["cnt"]}"
 
-        Bolt.Sips.Sandbox.stop_owner(conn)
+        Bolt.Sips.Sandbox.stop_owner(owner)
       end
 
       # Verify nothing persisted
-      Bolt.Sips.Sandbox.start_owner!(conn)
+      owner = Bolt.Sips.Sandbox.start_owner!(conn)
 
       {:ok, %Response{results: [result]}} =
         Bolt.Sips.query(conn, "MATCH (n:StressTest) RETURN count(n) AS cnt")
 
       assert result["cnt"] == 0
-      Bolt.Sips.Sandbox.stop_owner(conn)
+      Bolt.Sips.Sandbox.stop_owner(owner)
     end
   end
 
@@ -81,13 +81,15 @@ defmodule Bolt.Sips.SandboxStressTest do
       for i <- 1..@scale do
         task =
           Task.async(fn ->
-            Bolt.Sips.Sandbox.start_owner!(conn)
+            owner = Bolt.Sips.Sandbox.start_owner!(conn)
 
             {:ok, %Response{results: [result]}} =
               Bolt.Sips.query(conn, "RETURN $i AS n", %{i: i})
 
             assert result["n"] == i
             # No stop_owner — process exit triggers auto-cleanup
+            # (owner monitors this process and exits when it does)
+            _ = owner
           end)
 
         Task.await(task, 5_000)
@@ -95,13 +97,13 @@ defmodule Bolt.Sips.SandboxStressTest do
       end
 
       # Pool still healthy
-      Bolt.Sips.Sandbox.start_owner!(conn)
+      owner = Bolt.Sips.Sandbox.start_owner!(conn)
 
       {:ok, %Response{results: [result]}} =
         Bolt.Sips.query(conn, "RETURN 'alive' AS status")
 
       assert result["status"] == "alive"
-      Bolt.Sips.Sandbox.stop_owner(conn)
+      Bolt.Sips.Sandbox.stop_owner(owner)
     end
 
     test "#{@scale} shared-mode cycles" do
@@ -109,15 +111,32 @@ defmodule Bolt.Sips.SandboxStressTest do
 
       for i <- 1..@scale do
         Bolt.Sips.Sandbox.mode(conn, :manual)
-        Bolt.Sips.Sandbox.start_owner!(conn)
-        Bolt.Sips.Sandbox.mode(conn, {:shared, self()})
+        owner = Bolt.Sips.Sandbox.start_owner!(conn, shared: true)
 
         {:ok, %Response{results: [result]}} =
           Bolt.Sips.query(conn, "RETURN $i AS n", %{i: i})
 
         assert result["n"] == i
 
-        Bolt.Sips.Sandbox.stop_owner(conn)
+        Bolt.Sips.Sandbox.stop_owner(owner)
+      end
+    end
+
+    test "#{@scale} stop_owner from different process (simulates on_exit)" do
+      conn = Bolt.Sips.conn(:direct, prefix: @sandbox_prefix)
+      Bolt.Sips.Sandbox.mode(conn, :manual)
+
+      for i <- 1..@scale do
+        owner = Bolt.Sips.Sandbox.start_owner!(conn)
+
+        {:ok, %Response{results: [result]}} =
+          Bolt.Sips.query(conn, "RETURN $i AS n", %{i: i})
+
+        assert result["n"] == i
+
+        # Stop from a different process, simulating ExUnit on_exit
+        task = Task.async(fn -> Bolt.Sips.Sandbox.stop_owner(owner) end)
+        Task.await(task, 5_000)
       end
     end
   end

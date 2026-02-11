@@ -29,22 +29,17 @@ defmodule Bolt.Sips.SandboxTest do
   setup do
     conn = Bolt.Sips.conn(:direct, prefix: @sandbox_prefix)
     Bolt.Sips.Sandbox.mode(conn, :manual)
-    Bolt.Sips.Sandbox.start_owner!(conn)
-
-    on_exit(fn ->
-      # Checkin is a no-op if the owner process already exited.
-      # DBConnection.Ownership auto-releases on owner exit.
-      try do
-        Bolt.Sips.Sandbox.stop_owner(conn)
-      catch
-        _, _ -> :ok
-      end
-    end)
-
-    {:ok, conn: conn}
+    owner = Bolt.Sips.Sandbox.start_owner!(conn)
+    on_exit(fn -> Bolt.Sips.Sandbox.stop_owner(owner) end)
+    {:ok, conn: conn, owner: owner}
   end
 
   describe "start_owner!/1 and stop_owner/1" do
+    test "start_owner! returns a pid", %{owner: owner} do
+      assert is_pid(owner)
+      assert Process.alive?(owner)
+    end
+
     test "queries work inside a sandbox", %{conn: conn} do
       assert {:ok, %Response{}} =
                Bolt.Sips.query(conn, "CREATE (n:SandboxTest {name: 'hello'}) RETURN n")
@@ -59,7 +54,7 @@ defmodule Bolt.Sips.SandboxTest do
       assert result["cnt"] == 1
     end
 
-    test "data is rolled back when owner is stopped and re-started", %{conn: conn} do
+    test "data is rolled back when owner is stopped and re-started", %{conn: conn, owner: owner} do
       # Create data inside the sandbox
       Bolt.Sips.query!(conn, "CREATE (n:SandboxTest {name: 'rollback_me'}) RETURN n")
 
@@ -69,16 +64,40 @@ defmodule Bolt.Sips.SandboxTest do
       assert result["cnt"] == 1
 
       # Stop the owner — triggers ROLLBACK via pre_checkin
-      Bolt.Sips.Sandbox.stop_owner(conn)
+      Bolt.Sips.Sandbox.stop_owner(owner)
 
       # Re-checkout — starts a new BEGIN
-      Bolt.Sips.Sandbox.start_owner!(conn)
+      _new_owner = Bolt.Sips.Sandbox.start_owner!(conn)
 
       # The node should no longer exist
       {:ok, %Response{results: [result]}} =
         Bolt.Sips.query(conn, "MATCH (n:SandboxTest {name: 'rollback_me'}) RETURN count(n) AS cnt")
 
       assert result["cnt"] == 0
+    end
+
+    test "stop_owner works from a different process", %{owner: owner} do
+      task =
+        Task.async(fn ->
+          Bolt.Sips.Sandbox.stop_owner(owner)
+        end)
+
+      assert :ok = Task.await(task, 5_000)
+      refute Process.alive?(owner)
+    end
+
+    test "stop_owner works from on_exit callback" do
+      conn = Bolt.Sips.conn(:direct, prefix: @sandbox_prefix)
+      owner = Bolt.Sips.Sandbox.start_owner!(conn)
+
+      # Simulate what on_exit does — call from a different process
+      task =
+        Task.async(fn ->
+          Bolt.Sips.Sandbox.stop_owner(owner)
+        end)
+
+      assert :ok = Task.await(task, 5_000)
+      refute Process.alive?(owner)
     end
   end
 
@@ -91,7 +110,7 @@ defmodule Bolt.Sips.SandboxTest do
       task =
         Task.async(fn ->
           task_conn = Bolt.Sips.conn(:direct, prefix: @sandbox_prefix)
-          Bolt.Sips.Sandbox.start_owner!(task_conn)
+          task_owner = Bolt.Sips.Sandbox.start_owner!(task_conn)
 
           # This process should NOT see process_a's data
           {:ok, %Response{results: [result]}} =
@@ -105,7 +124,7 @@ defmodule Bolt.Sips.SandboxTest do
           # Create our own node
           Bolt.Sips.query!(task_conn, "CREATE (n:SandboxTest {name: 'process_b'}) RETURN n")
 
-          Bolt.Sips.Sandbox.stop_owner(task_conn)
+          Bolt.Sips.Sandbox.stop_owner(task_owner)
           count
         end)
 
@@ -121,16 +140,14 @@ defmodule Bolt.Sips.SandboxTest do
   end
 
   describe "allow/3" do
-    test "allowed process can use the owner's connection", %{conn: conn} do
+    test "allowed process can use the owner's connection", %{conn: conn, owner: owner} do
       # Create data in the owner's sandbox
       Bolt.Sips.query!(conn, "CREATE (n:SandboxTest {name: 'shared'}) RETURN n")
 
-      parent = self()
-
       task =
         Task.async(fn ->
-          # Allow this task to use the parent's connection
-          Bolt.Sips.Sandbox.allow(conn, parent, self())
+          # Allow this task to use the owner's connection
+          Bolt.Sips.Sandbox.allow(conn, owner, self())
 
           # The allowed process should see the owner's data
           {:ok, %Response{results: [result]}} =
@@ -144,6 +161,38 @@ defmodule Bolt.Sips.SandboxTest do
 
       count = Task.await(task, 10_000)
       assert count == 1
+    end
+  end
+
+  describe "shared mode" do
+    test "start_owner! with shared: true enables shared mode", %{owner: owner} do
+      conn = Bolt.Sips.conn(:direct, prefix: @sandbox_prefix)
+
+      # Stop the setup owner first
+      Bolt.Sips.Sandbox.stop_owner(owner)
+
+      # Start with shared mode
+      shared_owner = Bolt.Sips.Sandbox.start_owner!(conn, shared: true)
+
+      # Create data
+      Bolt.Sips.query!(conn, "CREATE (n:SandboxTest {name: 'shared_data'}) RETURN n")
+
+      # A completely unrelated process should see the data (shared mode)
+      task =
+        Task.async(fn ->
+          {:ok, %Response{results: [result]}} =
+            Bolt.Sips.query(
+              conn,
+              "MATCH (n:SandboxTest {name: 'shared_data'}) RETURN count(n) AS cnt"
+            )
+
+          result["cnt"]
+        end)
+
+      count = Task.await(task, 10_000)
+      assert count == 1
+
+      Bolt.Sips.Sandbox.stop_owner(shared_owner)
     end
   end
 
@@ -167,15 +216,11 @@ defmodule Bolt.Sips.SandboxTest do
   end
 
   describe "mode/2" do
-    test "auto mode allows queries without explicit checkout" do
+    test "auto mode allows queries without explicit checkout", %{owner: owner} do
       conn = Bolt.Sips.conn(:direct, prefix: @sandbox_prefix)
 
-      # Stop any existing ownership from the setup block
-      try do
-        Bolt.Sips.Sandbox.stop_owner(conn)
-      catch
-        _, _ -> :ok
-      end
+      # Stop the setup owner
+      Bolt.Sips.Sandbox.stop_owner(owner)
 
       Bolt.Sips.Sandbox.mode(conn, :auto)
 
@@ -184,9 +229,34 @@ defmodule Bolt.Sips.SandboxTest do
 
       # Reset back to manual for other tests
       Bolt.Sips.Sandbox.mode(conn, :manual)
+    end
+  end
 
-      # Re-checkout for the on_exit cleanup
-      Bolt.Sips.Sandbox.start_owner!(conn)
+  describe "owner process lifecycle" do
+    test "owner exits when caller exits", %{owner: owner} do
+      conn = Bolt.Sips.conn(:direct, prefix: @sandbox_prefix)
+
+      # Stop the setup owner
+      Bolt.Sips.Sandbox.stop_owner(owner)
+
+      # Spawn a process that starts an owner, then exits
+      {_caller_pid, caller_ref} =
+        spawn_monitor(fn ->
+          _inner_owner = Bolt.Sips.Sandbox.start_owner!(conn)
+          # Process exits here — owner should auto-cleanup
+        end)
+
+      # Wait for the caller to exit
+      assert_receive {:DOWN, ^caller_ref, _, _, _}, 5_000
+
+      # Give DBConnection a moment to process the exit
+      Process.sleep(50)
+
+      # Pool should be healthy — start a new owner
+      new_owner = Bolt.Sips.Sandbox.start_owner!(conn)
+      {:ok, %Response{results: [result]}} = Bolt.Sips.query(conn, "RETURN 'ok' AS status")
+      assert result["status"] == "ok"
+      Bolt.Sips.Sandbox.stop_owner(new_owner)
     end
   end
 end

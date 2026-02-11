@@ -40,14 +40,17 @@ defmodule Bolt.Sips.Sandbox do
       # test/support/data_case.ex or directly in your test module
       setup do
         conn = Bolt.Sips.conn()
-        Bolt.Sips.Sandbox.start_owner!(conn)
-        on_exit(fn ->
-          try do
-            Bolt.Sips.Sandbox.stop_owner(conn)
-          catch
-            _, _ -> :ok
-          end
-        end)
+        owner = Bolt.Sips.Sandbox.start_owner!(conn)
+        on_exit(fn -> Bolt.Sips.Sandbox.stop_owner(owner) end)
+        {:ok, conn: conn}
+      end
+
+  For `async: false` tests that need shared mode:
+
+      setup do
+        conn = Bolt.Sips.conn()
+        owner = Bolt.Sips.Sandbox.start_owner!(conn, shared: true)
+        on_exit(fn -> Bolt.Sips.Sandbox.stop_owner(owner) end)
         {:ok, conn: conn}
       end
 
@@ -59,7 +62,8 @@ defmodule Bolt.Sips.Sandbox do
     normal pool. Useful during development or for non-isolated tests.
   - `{:shared, pid}` — All processes share the connection owned by `pid`.
     Use this for `async: false` tests where multiple processes need to
-    share a single transaction.
+    share a single transaction. Prefer using `start_owner!(conn, shared: true)`
+    which handles this automatically.
 
   ## Sharing connections with spawned processes
 
@@ -112,49 +116,107 @@ defmodule Bolt.Sips.Sandbox do
   @doc """
   Checks out a connection and wraps it in a transaction.
 
-  The calling process becomes the owner of the connection. All queries
-  executed by this process (or allowed processes) will run inside the
-  transaction. When `stop_owner/1` is called or the owner process exits,
-  the transaction is rolled back automatically.
+  Spawns a dedicated owner process that holds the connection. The calling
+  process is automatically allowed to use it. Returns the owner PID, which
+  must be passed to `stop_owner/1` when done.
 
-  Returns `:ok`.
+  When the calling process exits, the owner process exits too, automatically
+  rolling back the transaction and returning the connection to the pool.
 
   ## Options
 
-  Accepts the same options as `DBConnection.Ownership.ownership_checkout/2`.
+  - `:shared` — when `true`, sets the pool to `{:shared, owner}` mode so
+    all processes route through this connection. Use for `async: false` tests.
+    Defaults to `false`.
+  - `:ownership_timeout` — timeout for the checkout operation in milliseconds.
+    Defaults to `120_000`.
+
+  ## Examples
+
+      # async: true test — exclusive ownership
+      owner = Bolt.Sips.Sandbox.start_owner!(conn)
+
+      # async: false test — shared ownership
+      owner = Bolt.Sips.Sandbox.start_owner!(conn, shared: true)
   """
-  @spec start_owner!(DBConnection.conn(), keyword()) :: :ok
+  @spec start_owner!(DBConnection.conn(), keyword()) :: pid()
   def start_owner!(conn, opts \\ []) do
-    ownership_opts =
-      Keyword.merge(opts,
-        post_checkout: &post_checkout/2,
-        pre_checkin: &pre_checkin/3
-      )
+    caller = self()
+    shared = Keyword.get(opts, :shared, false)
+    timeout = Keyword.get(opts, :ownership_timeout, 120_000)
 
-    case DBConnection.Ownership.ownership_checkout(conn, ownership_opts) do
-      :ok ->
-        :ok
+    checkout_opts = [
+      post_checkout: &post_checkout/2,
+      pre_checkin: &pre_checkin/3
+    ]
 
-      {:already, :owner} ->
-        :ok
+    {:ok, owner} =
+      Task.start(fn ->
+        case DBConnection.Ownership.ownership_checkout(conn, checkout_opts) do
+          :ok -> :ok
+          {:already, :owner} -> :ok
+          {:already, :allowed} -> :ok
+          other ->
+            send(caller, {__MODULE__, self(), {:error, inspect(other)}})
+            exit(:checkout_failed)
+        end
 
-      {:already, :allowed} ->
-        :ok
+        # Allow the caller to use our connection
+        DBConnection.Ownership.ownership_allow(conn, self(), caller, [])
 
-      other ->
-        raise "Failed to checkout Neo4j sandbox connection: #{inspect(other)}"
+        # Set shared mode if requested
+        if shared do
+          DBConnection.Ownership.ownership_mode(conn, {:shared, self()}, [])
+        end
+
+        # Signal that setup is complete
+        send(caller, {__MODULE__, self(), :ok})
+
+        # Wait for caller to exit or stop signal
+        ref = Process.monitor(caller)
+
+        receive do
+          {:DOWN, ^ref, _, _, _} -> :ok
+          {__MODULE__, :stop} -> :ok
+        end
+
+        # Explicitly checkin before exiting — this runs ROLLBACK
+        # synchronously so the connection is fully released before
+        # this process exits and the caller can proceed.
+        DBConnection.Ownership.ownership_checkin(conn, [])
+      end)
+
+    receive do
+      {__MODULE__, ^owner, :ok} ->
+        owner
+
+      {__MODULE__, ^owner, {:error, reason}} ->
+        raise "Failed to checkout Neo4j sandbox connection: #{reason}"
+    after
+      timeout ->
+        Process.exit(owner, :kill)
+        raise "Timed out waiting for Neo4j sandbox connection checkout"
     end
   end
 
   @doc """
-  Stops the owner, rolling back the transaction and returning
+  Stops the owner process, rolling back the transaction and returning
   the connection to the pool.
 
-  Must be called from the owner process.
+  Can be called from any process. When the owner process exits,
+  `DBConnection.Ownership` triggers the `pre_checkin` callback which
+  sends a ROLLBACK to Neo4j.
   """
-  @spec stop_owner(DBConnection.conn()) :: :ok | :not_owner | :not_found
-  def stop_owner(conn) do
-    DBConnection.Ownership.ownership_checkin(conn, [])
+  @spec stop_owner(pid()) :: :ok
+  def stop_owner(pid) when is_pid(pid) do
+    ref = Process.monitor(pid)
+    send(pid, {__MODULE__, :stop})
+
+    receive do
+      {:DOWN, ^ref, _, _, _} -> :ok
+    after
+      5_000 -> :ok
+    end
   end
 
   @doc """
