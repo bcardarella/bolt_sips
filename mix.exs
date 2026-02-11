@@ -89,6 +89,7 @@ defmodule BoltSips.Mixfile do
         "docs/features/using-cypher.md",
         "docs/features/using-temporal-and-spatial-types.md",
         "docs/features/about-transactions.md",
+        "docs/features/sandbox.md",
         "docs/features/about-encoding.md",
         "docs/features/routing.md",
         "docs/features/multi-tenancy.md",

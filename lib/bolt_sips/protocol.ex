@@ -6,13 +6,15 @@ defmodule Bolt.Sips.Protocol do
   defmodule ConnData do
     @moduledoc false
     # Defines the state used by DbConnection implementation
-    defstruct [:sock, :bolt_version, :configuration, :server_hints]
+    defstruct [:sock, :bolt_version, :configuration, :server_hints, status: :idle, tx_depth: 0]
 
     @type t :: %__MODULE__{
             sock: port(),
             bolt_version: integer() | {integer(), integer()},
             configuration: Keyword.t(),
-            server_hints: map() | nil
+            server_hints: map() | nil,
+            status: :idle | :transaction,
+            tx_depth: non_neg_integer()
           }
   end
 
@@ -277,6 +279,12 @@ defmodule Bolt.Sips.Protocol do
   defp extract_sock(_), do: nil
 
   @doc "Callback for DBConnection.handle_begin/1"
+  # Already in a transaction — increment depth without sending BEGIN to Neo4j.
+  # This supports nested Bolt.Sips.transaction calls inside a sandbox.
+  def handle_begin(_, %ConnData{status: :transaction, tx_depth: depth} = conn_data) do
+    {:ok, :began, %{conn_data | tx_depth: depth + 1}}
+  end
+
   # v4+ and v3 use BEGIN message
   def handle_begin(_, %ConnData{sock: sock, bolt_version: bolt_version, configuration: conf} = conn_data)
       when is_tuple(bolt_version) or bolt_version >= 3 do
@@ -284,7 +292,7 @@ defmodule Bolt.Sips.Protocol do
 
     case BoltProtocol.begin(socket, sock, bolt_version) do
       {:ok, _} ->
-        {:ok, :began, conn_data}
+        {:ok, :began, %{conn_data | status: :transaction, tx_depth: 1}}
 
       {:error, %BoltError{type: :connection_error} = error} ->
         {:disconnect, error, conn_data}
@@ -300,10 +308,15 @@ defmodule Bolt.Sips.Protocol do
     %QueryStatement{statement: "BEGIN"}
     |> handle_execute(%{}, [], conn_data)
 
-    {:ok, :began, conn_data}
+    {:ok, :began, %{conn_data | status: :transaction, tx_depth: 1}}
   end
 
   @doc "Callback for DBConnection.handle_rollback/1"
+  # Nested transaction — decrement depth without sending ROLLBACK to Neo4j.
+  def handle_rollback(_, %ConnData{tx_depth: depth} = conn_data) when depth > 1 do
+    {:ok, :rolledback, %{conn_data | tx_depth: depth - 1}}
+  end
+
   # v4+ and v3 use ROLLBACK message
   def handle_rollback(_, %ConnData{sock: sock, bolt_version: bolt_version, configuration: conf} = conn_data)
       when is_tuple(bolt_version) or bolt_version >= 3 do
@@ -311,7 +324,7 @@ defmodule Bolt.Sips.Protocol do
 
     case BoltProtocol.rollback(socket, sock, bolt_version) do
       :ok ->
-        {:ok, :rolledback, conn_data}
+        {:ok, :rolledback, %{conn_data | status: :idle, tx_depth: 0}}
 
       %BoltError{type: :connection_error} = error ->
         {:disconnect, error, conn_data}
@@ -327,10 +340,15 @@ defmodule Bolt.Sips.Protocol do
     %QueryStatement{statement: "ROLLBACK"}
     |> handle_execute(%{}, [], conn_data)
 
-    {:ok, :rolledback, conn_data}
+    {:ok, :rolledback, %{conn_data | status: :idle, tx_depth: 0}}
   end
 
   @doc "Callback for DBConnection.handle_commit/1"
+  # Nested transaction — decrement depth without sending COMMIT to Neo4j.
+  def handle_commit(_, %ConnData{tx_depth: depth} = conn_data) when depth > 1 do
+    {:ok, :committed, %{conn_data | tx_depth: depth - 1}}
+  end
+
   # v4+ and v3 use COMMIT message
   def handle_commit(_, %ConnData{sock: sock, bolt_version: bolt_version, configuration: conf} = conn_data)
       when is_tuple(bolt_version) or bolt_version >= 3 do
@@ -338,7 +356,7 @@ defmodule Bolt.Sips.Protocol do
 
     case BoltProtocol.commit(socket, sock, bolt_version) do
       {:ok, _} ->
-        {:ok, :committed, conn_data}
+        {:ok, :committed, %{conn_data | status: :idle, tx_depth: 0}}
 
       {:error, %BoltError{type: :connection_error} = error} ->
         {:disconnect, error, conn_data}
@@ -354,7 +372,7 @@ defmodule Bolt.Sips.Protocol do
     %QueryStatement{statement: "COMMIT"}
     |> handle_execute(%{}, [], conn_data)
 
-    {:ok, :committed, conn_data}
+    {:ok, :committed, %{conn_data | status: :idle, tx_depth: 0}}
   end
 
   @doc "Callback for DBConnection.handle_execute/1"
@@ -419,6 +437,7 @@ defmodule Bolt.Sips.Protocol do
   def handle_deallocate(query, _cursor, _opts, state), do: {:ok, query, state}
   def handle_declare(query, _params, _opts, state), do: {:ok, query, state, nil}
   def handle_fetch(query, _cursor, _opts, state), do: {:cont, query, state}
+  def handle_status(_opts, %ConnData{status: status} = state), do: {status, state}
   def handle_status(_opts, state), do: {:idle, state}
 
   defp extract_auth(nil), do: {}
