@@ -180,6 +180,13 @@ defmodule Bolt.Sips.Sandbox do
           {__MODULE__, :stop} -> :ok
         end
 
+        # Reset pool mode to manual before checkin if shared mode was set.
+        # Without this, the pool remains in {:shared, dead_pid} mode after
+        # the owner exits, causing subsequent tests to fail.
+        if shared do
+          DBConnection.Ownership.ownership_mode(conn, :manual, [])
+        end
+
         # Explicitly checkin before exiting — this runs ROLLBACK
         # synchronously so the connection is fully released before
         # this process exits and the caller can proceed.
