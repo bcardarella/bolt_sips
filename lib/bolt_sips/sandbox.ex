@@ -239,11 +239,13 @@ defmodule Bolt.Sips.Sandbox do
         {:ok, conn_module, new_state}
 
       {:error, _err, new_state} ->
-        # ROLLBACK failed — connection state is unreliable.
+        # ROLLBACK failed — connection state may be unreliable since
+        # BoltProtocol.reset() doesn't verify its own success.
         # Disconnect so the pool creates a fresh connection.
         {:disconnect, :rollback_failed, conn_module, new_state}
 
       {:disconnect, _err, new_state} ->
+        # Actual connection error — socket is broken.
         {:disconnect, :rollback_failed, conn_module, new_state}
     end
   end
